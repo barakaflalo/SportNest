@@ -1,0 +1,2264 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0b0b0d">
+<meta name="description" content="SportNest — משחקי חשיבה ואסטרטגיה: לבד, מול המחשב, בשניים או אונליין">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>SportNest</title>
+<style>:root{--bg:#0b0b0d;--bg2:#15151a;--card:#1b1b22;--card2:#24242e;--fg:#f4efe3;--muted:#9a95a6;--acc:#e8b84a;--acc2:#ffd877;--line:#34343f;--good:#59d28a;--bad:#ff6b6b;--on-acc:#1a1405;--r:16px}
+:root[data-mode=day]{--bg:#f4efe6;--bg2:#ebe4d6;--card:#fffdf8;--card2:#f1eadc;--fg:#231f17;--muted:#7a7262;--line:#d9cfba;--on-acc:#fff;--good:#1f9d63;--bad:#c42f45}
+:root[data-theme=gold]{--acc:#e8b84a;--acc2:#ffd877}:root[data-theme=gold][data-mode=day]{--acc:#b8860b;--acc2:#8c6508}
+:root[data-theme=silver]{--acc:#c9d1dc;--acc2:#e6ebf2;--on-acc:#10141c}:root[data-theme=silver][data-mode=day]{--acc:#5d6b7e;--acc2:#3f4b5c;--on-acc:#fff}
+:root[data-theme=emerald]{--acc:#4fd18b;--acc2:#8cebb6;--on-acc:#05200f}:root[data-theme=emerald][data-mode=day]{--acc:#1f9d63;--acc2:#157348;--on-acc:#fff}
+:root[data-theme=ruby]{--acc:#ff6b7a;--acc2:#ff9aa5;--on-acc:#2b0610}:root[data-theme=ruby][data-mode=day]{--acc:#c42f45;--acc2:#9b2236;--on-acc:#fff}
+:root[data-theme=ocean]{--acc:#5aaeff;--acc2:#9bcdff;--on-acc:#04122b}:root[data-theme=ocean][data-mode=day]{--acc:#1f78c8;--acc2:#165a96;--on-acc:#fff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:radial-gradient(120% 70% at 15% 0%,color-mix(in srgb,var(--acc) 16%,transparent),transparent 60%),radial-gradient(90% 60% at 100% 100%,color-mix(in srgb,var(--acc) 10%,transparent),transparent 60%),var(--bg);background-attachment:fixed;color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;overscroll-behavior:none;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+body{display:flex;flex-direction:column}
+button{font:inherit;color:inherit}
+.sc{display:none;flex:1;min-height:0;flex-direction:column;padding:12px 16px calc(12px + env(safe-area-inset-bottom));overflow-y:auto}
+.sc.on{display:flex;animation:scIn .18s ease-out}
+@keyframes scIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.top{display:flex;align-items:center;gap:10px;min-height:52px}
+.top h1{flex:1;margin:0;font-size:20px;font-weight:800;letter-spacing:.2px}
+.ib{width:52px;height:52px;border-radius:14px;border:1px solid var(--line);background:var(--card);display:grid;place-items:center;font-size:22px;cursor:pointer}
+.ib:active,.btn:active,.tile:active,.lv:active{transform:scale(.96)}
+.back{display:flex;align-items:center;gap:6px;height:52px;padding:0 16px;border-radius:14px;border:1px solid var(--acc);background:var(--card);color:var(--acc);font-weight:700;cursor:pointer;font-size:16px}
+.btn{min-height:56px;padding:12px 20px;border-radius:var(--r);border:1px solid var(--line);background:var(--card);font-weight:700;font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px}
+.btn.pri{background:var(--acc);color:var(--on-acc);border-color:var(--acc)}
+.btn.sm{min-height:48px;font-size:15px;padding:8px 14px}
+.btn[disabled]{opacity:.4;pointer-events:none}
+.brand{text-align:center;padding:10px 0 4px}
+.brand .logo{font-size:44px;line-height:1}
+.brand h2{margin:6px 0 2px;font-size:30px;font-weight:900;color:var(--acc);letter-spacing:.5px}
+.brand p{margin:0;color:var(--muted);font-size:14px}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+.tile{position:relative;border-radius:20px;border:1px solid var(--line);background:linear-gradient(160deg,var(--card2),var(--card));padding:14px 12px 12px;min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;cursor:pointer;overflow:hidden}
+.tile .art{width:100%;height:84px;display:grid;place-items:center;font-size:52px}
+.tile .art svg,.tile .art canvas{max-width:100%;max-height:84px}
+.tile b{font-size:17px;text-align:center}
+.tile small{color:var(--muted);font-size:12px;text-align:center}
+.who{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:8px 12px;margin-top:4px}
+.who .av{font-size:30px}
+.foot{margin-top:auto;padding-top:14px;text-align:center;color:var(--muted);font-size:12px}
+.modes{display:flex;flex-direction:column;gap:12px;margin:14px 0}
+.modes .btn{justify-content:flex-start;text-align:start;min-height:68px}
+.modes .btn .ic{font-size:30px;width:40px;text-align:center}
+.modes .btn small{display:block;color:var(--muted);font-weight:500;font-size:13px}
+.modes .btn.pri small{color:var(--on-acc);opacity:.75}
+.map{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0 18px}
+.wh{font-weight:800;color:var(--acc);margin:12px 0 0;font-size:15px}
+.lv{aspect-ratio:1;border-radius:16px;border:1px solid var(--line);background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:20px;font-weight:800;cursor:pointer;min-height:68px}
+.lv .st{font-size:13px;letter-spacing:1px;color:var(--acc);min-height:16px}
+.lv.lock{opacity:.35;pointer-events:none}
+.lv.cur{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc) inset}
+.row{display:flex;gap:10px;align-items:center}
+.lbl{color:var(--muted);font-size:13px;margin:12px 2px 6px}
+.seg{display:flex;flex-wrap:wrap;gap:8px}
+.seg button{min-height:48px;padding:8px 16px;border-radius:12px;border:1px solid var(--line);background:var(--card);cursor:pointer;font-weight:600}
+.seg button.on{background:var(--acc);color:var(--on-acc);border-color:var(--acc)}
+input.txt{width:100%;min-height:52px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-size:18px;padding:0 14px;outline:none}
+input.txt:focus{border-color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.66);display:flex;align-items:center;justify-content:center;padding:18px;z-index:50;animation:scIn .15s}
+.ov .box{background:var(--bg2);border:1px solid var(--line);border-radius:22px;padding:20px;max-width:420px;width:100%;max-height:88vh;overflow:auto;text-align:center}
+.ov h3{margin:0 0 8px;font-size:22px}
+.ov p{color:var(--muted);margin:6px 0 14px;line-height:1.5}
+.ov .btn{width:100%;margin-top:10px}
+.big-st{font-size:40px;letter-spacing:6px;color:var(--acc);margin:6px 0}
+.toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:12px 18px;border-radius:14px;font-weight:700;z-index:80;max-width:86vw;text-align:center;animation:scIn .15s}
+/* ---- משחק ---- */
+#play{position:relative;padding:6px 8px calc(6px + env(safe-area-inset-bottom));gap:6px}
+.hud{display:flex;align-items:center;gap:8px;min-height:44px}
+.hud .ib{width:46px;height:46px;font-size:20px}
+.hud .stat{flex:1;display:flex;justify-content:space-around;font-weight:800;direction:ltr}
+.hud .stat span small{display:block;color:var(--muted);font-weight:500;font-size:11px;text-align:center}
+.stage{flex:1;min-height:0;display:flex;gap:8px;align-items:stretch;direction:ltr}
+.col{display:flex;flex-direction:column;gap:8px;width:30%;max-width:130px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px;display:grid;place-items:center}
+.panel canvas{width:100%;display:block}
+.boardwrap{flex:1;min-width:0;position:relative;display:flex;align-items:center;justify-content:center;touch-action:none}
+.boardwrap canvas{max-width:100%;max-height:100%;border-radius:10px;border:1px solid var(--line);touch-action:none}
+.pend{position:absolute;inset-inline-start:-1px;bottom:0;width:7px;background:var(--bad);border-radius:4px;transition:height .12s;height:0}
+.ctrl{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;direction:ltr}
+.ctrl button{min-height:64px;border-radius:16px;border:1px solid var(--line);background:var(--card);font-size:26px;cursor:pointer;touch-action:none}
+.ctrl button:active,.ctrl button.dn{background:var(--acc);color:var(--on-acc)}
+.voice{display:flex;gap:8px;align-items:center;direction:ltr}
+.voice button{flex:1;min-height:52px;border-radius:14px;border:1px solid var(--line);background:var(--card);font-weight:700;cursor:pointer;touch-action:none;font-size:15px}
+.voice button.dn{background:var(--good);color:#06200f}
+.talking{color:var(--good);font-weight:700;font-size:13px}
+.countdown{position:absolute;inset:0;display:grid;place-items:center;font-size:96px;font-weight:900;color:var(--acc);text-shadow:0 4px 24px #000;pointer-events:none;z-index:5}
+/* שניים בטלפון: שוכב */
+.two{flex-direction:row!important}
+.two .side{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
+.hint{color:var(--muted);font-size:13px;text-align:center}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--card2);font-size:12px;color:var(--muted)}
+.wrap-lobby{display:flex;flex-direction:column;gap:12px;margin-top:10px}
+.code{font-size:44px;font-weight:900;letter-spacing:8px;text-align:center;color:var(--acc);direction:ltr}
+.seats .card{display:flex;align-items:center;gap:10px}
+.seats .dot{width:10px;height:10px;border-radius:50%;background:var(--bad)}
+.seats .dot.on{background:var(--good)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-height:640px){.brand .logo{font-size:30px}.tile{min-height:120px}.tile .art{height:60px;font-size:38px}}
+
+.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;direction:ltr}
+.strip .panel{padding:3px;border-radius:10px}
+.oppcol{width:74px;flex:none}
+.oppcol .panel{padding:4px 3px}
+.two .side .panel{border-radius:10px}
+
+.two .side{justify-content:flex-end}
+.two .boardwrap{flex:none}
+.two .ctrl{grid-template-columns:1fr 1fr}
+.two .ctrl button{min-height:clamp(52px,8.5vh,84px)}
+.two .ctrl [data-k=ccw]{order:1}.two .ctrl [data-k=cw]{order:2}.two .ctrl [data-k=left]{order:3}.two .ctrl [data-k=right]{order:4}.two .ctrl [data-k=drop]{order:5;grid-column:1/3}
+
+/* ---- מעטפת AppNest: בית, כלים, הגדרות, אודות, אלבום ---- */
+.hero{position:relative;text-align:center;padding:6px 0 4px}
+.hero .me{display:flex;align-items:center;gap:8px;min-height:48px;padding:4px 14px 4px 8px;border-radius:999px;border:1px solid var(--line);background:var(--card);cursor:pointer;font-weight:700;font-size:15px}
+.hero .me .av{font-size:26px}
+.hero .toprow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.quick{display:flex;gap:8px}.quick button{width:48px;height:48px;border-radius:14px;border:1px solid var(--line);background:var(--card);font-size:21px;cursor:pointer}
+.wordmark{font-size:36px;font-weight:900;letter-spacing:.5px;margin-top:6px}.wordmark i{font-style:normal;color:var(--acc)}
+.sub{color:var(--muted);font-size:14px}
+.floaty{display:flex;justify-content:center;gap:14px;font-size:26px;opacity:.85;margin-top:4px}
+.dailyb{display:flex;align-items:center;gap:12px;width:100%;min-height:72px;border-radius:var(--r);border:1px solid var(--acc);background:linear-gradient(120deg,var(--card2),var(--card));cursor:pointer;padding:10px 14px;text-align:start;margin-top:10px}
+.dailyb .ic{font-size:34px}.dailyb b{display:block;font-size:17px}.dailyb small{color:var(--muted);font-size:13px}
+.dailyb.done{border-color:var(--good)}
+.week{display:flex;justify-content:space-between;gap:4px;margin-top:8px;direction:ltr}
+.week i{flex:1;text-align:center;font-style:normal;font-size:11px;color:var(--muted);padding:6px 0;border-radius:10px;background:var(--card);border:1px solid var(--line)}
+.week i.on{background:var(--acc);color:var(--on-acc);border-color:var(--acc);font-weight:800}.week i.today{border-color:var(--acc)}
+.resume{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;border-radius:var(--r);border:1px solid var(--line);background:var(--card);cursor:pointer;padding:8px 14px;margin-top:10px;text-align:start;font-weight:700}
+.tools{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:4px 0 8px}
+.tools button{min-height:76px;border-radius:16px;border:1px solid var(--line);background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:13px;font-weight:700;cursor:pointer}
+.tools button i{font-style:normal;font-size:26px}
+.badge{text-align:center;color:var(--muted);font-size:12px;padding:6px 0}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:48px;padding:4px 0}
+.sw small{display:block;color:var(--muted);font-size:12px}
+.sw input[type=checkbox]{width:26px;height:26px;accent-color:var(--acc)}
+.card h3{margin:0 0 10px;font-size:16px}
+.card+.card{margin-top:10px}
+.avs{display:flex;flex-wrap:wrap;gap:8px}.avs button{width:52px;height:52px;border-radius:14px;border:1px solid var(--line);background:var(--card);font-size:28px;cursor:pointer}.avs button.on{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc) inset}
+.stat3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}.stat3 b{display:block;font-size:22px;color:var(--acc)}.stat3 span{font-size:12px;color:var(--muted)}
+.stk{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stk button{min-height:96px;border-radius:16px;border:1px solid var(--line);background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:12px;cursor:pointer;padding:6px;opacity:.38;filter:grayscale(1)}
+.stk button.got{opacity:1;filter:none;border-color:var(--acc)}.stk button i{font-style:normal;font-size:34px}
+.rules h2{margin:14px 0 6px;font-size:18px;color:var(--acc)}.rules p{margin:6px 0;line-height:1.55}
+.gbig{font-size:64px;text-align:center}
+.dots{display:flex;gap:6px;justify-content:center;margin:12px 0}.dots i{width:9px;height:9px;border-radius:50%;background:var(--line)}.dots i.on{background:var(--acc)}
+.linkbtn{text-decoration:none;color:inherit}
+
+/* רקעים למשחקים */
+:root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] #play{background-size:cover;background-position:center}
+#play .hud .stat,#play .tdhud{text-shadow:0 1px 3px rgba(0,0,0,.45);color:#fff}
+:root[data-mode=day] #play .hud .stat,:root[data-mode=day] #play .tdhud{color:#1b2b20;text-shadow:none}
+.tile .art img{width:100%;height:100%;object-fit:contain;display:block}
+.tile .art{flex:0 0 auto;height:92px;margin-bottom:4px}
+.tile b,.tile small{position:relative;z-index:1}
+:root[data-mode=day] #play .hint{background:rgba(10,20,30,.55);color:#fff;border-radius:14px;padding:8px 12px;align-self:center}
+#play .hint:empty{display:none}
+#play .hud .stat{background:rgba(10,20,30,.45);border-radius:14px;padding:4px 14px}
+#play .hud .stat small{color:#dfe8ee}
+:root[data-mode=day] :root[data-mode=day] 
+:root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] 
+#play[data-bg=pen]{background:linear-gradient(180deg,#27406a,#2f5d86 40%,#3d8a55)}
+.pen-views{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
+.pen-views .pv{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+.pen-views.duo .pv.top canvas{transform:rotate(180deg)}
+.pen-views canvas{max-width:100%;max-height:100%;border-radius:14px;border:1px solid var(--line);touch-action:none}
+</style>
+</head>
+<body>
+<div id="home" class="sc on"></div>
+<div id="gmenu" class="sc"></div>
+<div id="map" class="sc"></div>
+<div id="play" class="sc"></div>
+<div id="settings" class="sc"></div>
+<div id="lobby" class="sc"></div>
+<div id="rules" class="sc"></div>
+<div id="stats" class="sc"></div>
+<div id="album" class="sc"></div>
+<div id="about" class="sc"></div>
+<script>
+const ART_FILES = [];
+/* ===== src/nestlink.js ===== */
+/* =====================================================================
+   NestLink 1.1 — AppNest online multiplayer module (WebRTC via PeerJS)
+   One file, drop into any AppNest game. No server of our own:
+   - a public PeerJS server only introduces the phones; game data, voice
+     and voice messages then travel directly phone-to-phone.
+   - star layout: the host is seat 0 and relays messages between guests,
+     so 2–6 players work; voice is a direct mesh (good up to ~4–5).
+   - every game message is sequenced and re-sent after a reconnect.
+   The game owns the session object (persist it with the game state) and
+   receives events through callbacks. See NESTLINK.md for the API.
+   1.1: sendTo(seat, d) — a private message to one seat only (card games:
+        the host deals each player only their own cards). Compatible with 1.0.
+        Heartbeat: a phone that vanished (app closed, no signal) is marked offline
+        within ~10 s instead of looking connected forever.
+        After a reconnect, if the other side already got more messages than we
+        remember sending (we restored an older saved session), numbering continues
+        after theirs instead of being silently ignored.
+   ===================================================================== */
+const NestLink = (() => {
+  const CDNS = ['https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js', 'https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js'];
+  const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
+  const AB = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const genCode = (n = 5) => Array.from({ length: n }, () => AB[Math.floor(Math.random() * AB.length)]).join('');
+  const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  function loadScript(u) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = u; s.onload = res; s.onerror = rej; document.head.appendChild(s); setTimeout(rej, 12000); }); }
+  async function loadPeer() { if (window.Peer) return true; for (const u of CDNS) { try { await loadScript(u); if (window.Peer) return true; } catch (e) {} } return false; }
+  const b64 = buf => { let s = '', a = new Uint8Array(buf); for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s); };
+  const unb64 = s => { const b = atob(s), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; };
+
+  function create(opt) {
+    const L = { status: 'off', lastErr: null, peer: null, conns: {}, retry: null, chunks: {}, calls: {}, audio: {}, mic: null, talking: false, openMic: false, rec: null, seen: {}, hb: {}, hbT: null };
+    let S = null;                                         // the session — owned and persisted by the game
+    const ev = (k, ...a) => { try { opt[k] && opt[k](...a); } catch (e) { console.error(e); } };
+    const persist = () => ev('persist', S);
+    const roomId = c => (opt.app || 'nest') + '-v1-' + c.toLowerCase();
+    const max = () => opt.maxPlayers || 2;
+    const isHost = () => S && S.role === 'host';
+    function peerOpts() {
+      const q = new URLSearchParams(location.search), o = { debug: 0, config: { iceServers: opt.iceServers || ICE } };
+      if (q.get('peerhost')) { o.host = q.get('peerhost'); o.port = +(q.get('peerport') || 9000); o.path = '/'; o.secure = false; }   // test servers only
+      return o;
+    }
+    function setStatus(st, err) { L.status = st; if (err !== undefined) L.lastErr = err; ev('onStatus', st, L.lastErr); }
+    const link = seat => S.links[seat] || (S.links[seat] = { seq: 0, lastIn: 0, out: [] });
+    const rosterEntry = seat => S.roster.find(p => p.seat === seat);
+    function rawTo(seat, m) { const c = L.conns[seat]; try { if (c && c.open) c.send(m); } catch (e) {} }
+    function rawAll(m, except) { for (const s in L.conns) if (+s !== except) rawTo(+s, m); }
+
+    /* ---------- starting ---------- */
+    async function start(session) {
+      close(true); S = session; persist();
+      L.hbT = setInterval(beat, 3000);                   // after close(), which clears it
+      setStatus('connecting');
+      if (!(await loadPeer())) { setStatus('error', 'load'); return false; }
+      const peer = L.peer = new Peer(isHost() ? roomId(S.code) : undefined, peerOpts());
+      peer.on('open', id => {
+        S.pid = id; if (isHost()) { const me = rosterEntry(0); if (me) { me.pid = id; me.online = true; } }
+        persist(); setStatus(isHost() ? 'waiting' : 'connecting'); if (!isHost()) connectHost();
+      });
+      peer.on('connection', c => { if (isHost()) attach(c, null); });
+      peer.on('call', onCall);
+      peer.on('disconnected', () => setTimeout(() => { try { if (L.peer === peer && !peer.destroyed) peer.reconnect(); } catch (e) {} }, 1500));
+      peer.on('error', e => {
+        const t = e && e.type;
+        if (t === 'unavailable-id') {                     // room id still held (e.g. after reload) — new code while nobody joined, else retry
+          if (S.roster.length < 2) { S.code = genCode(); persist(); ev('onCode', S.code); }
+          setTimeout(() => start(S), S.roster.length < 2 ? 300 : 4000); return;
+        }
+        if (t === 'peer-unavailable') { setStatus('notfound', 'nf'); scheduleRetry(); return; }
+        if (/network|server-error|socket/.test(t || '')) setStatus('error', 'net');
+      });
+      return true;
+    }
+    function host(code) {
+      return start({ role: 'host', code: code || genCode(), seat: 0, cid: uid(), roster: [{ seat: 0, name: opt.name ? opt.name() : '', online: true, cid: null, voice: false }], links: {} });
+    }
+    function join(code) { return start({ role: 'guest', code: code.toUpperCase(), seat: null, cid: uid(), roster: [], links: {} }); }
+    function resume(session) { return start(session); }
+    function scheduleRetry() { clearTimeout(L.retry); if (S && !isHost() && !(L.conns[0] && L.conns[0].open)) L.retry = setTimeout(connectHost, 3000); }
+    function connectHost() { if (!L.peer || L.peer.destroyed || (L.conns[0] && L.conns[0].open)) return; attach(L.peer.connect(roomId(S.code), { reliable: true, serialization: 'json' }), 0); scheduleRetry(); }
+
+    /* ---------- connections ---------- */
+    function attach(c, seat) {
+      let mySeat = seat;                                  // the seat at the other end of this connection
+      const onOpen = () => {
+        if (!isHost()) { L.conns[0] = c; rawTo(0, { t: 'hi', cid: S.cid, name: opt.name ? opt.name() : '', have: link(0).lastIn, v: opt.version, hb: 1 }); }
+      };
+      if (c.open) onOpen(); else c.on('open', onOpen);
+      c.on('data', m => {
+        if (!m || !m.t) return;
+        const key = isHost() ? mySeat : 0;                // 1.1 heartbeat: remember when we last heard from them
+        if (key != null) L.seen[key] = Date.now();
+        if (m.t === 'ping') { if (key != null) L.hb[key] = 1; return; }
+        if (isHost() && m.t === 'hi') {                   // a guest introduces itself → give it a seat (same seat when it comes back)
+          let p = S.roster.find(x => x.cid === m.cid);
+          if (!p) {
+            if (S.roster.length >= max()) { try { c.send({ t: 'full' }); c.close(); } catch (e) {} return; }
+            let s = 1; while (S.roster.some(x => x.seat === s)) s++;
+            p = { seat: s, cid: m.cid, name: '', online: true, voice: false }; S.roster.push(p); S.roster.sort((a, b) => a.seat - b.seat);
+            ev('onJoin', s);
+          }
+          mySeat = p.seat; p.name = (m.name || '').slice(0, 20); p.online = true; p.pid = c.peer;
+          if ((m.have || 0) > link(mySeat).seq) link(mySeat).seq = m.have;   // 1.1: we restored an older session — keep numbering after what they already got
+          if (L.conns[mySeat] && L.conns[mySeat] !== c) { try { L.conns[mySeat].close(); } catch (e) {} }
+          L.conns[mySeat] = c; L.seen[mySeat] = Date.now(); L.hb[mySeat] = m.hb ? 1 : 0;   // 1.1 phones announce the heartbeat
+          rawTo(mySeat, { t: 'hi', seat: mySeat, have: link(mySeat).lastIn, roster: S.roster, v: opt.version, hb: 1 });
+          link(mySeat).out.filter(x => x.seq > (m.have || 0)).forEach(x => rawTo(mySeat, x));
+          if (m.v && opt.version && m.v.split('.')[0] !== opt.version.split('.')[0]) ev('onVersion', m.v);
+          persist(); broadcastRoster(); setStatus('open'); callEveryone();
+          return;
+        }
+        if (!isHost() && m.t === 'hi') {
+          S.seat = m.seat; S.roster = m.roster || []; L.seen[0] = Date.now(); L.hb[0] = m.hb ? 1 : 0;
+          if ((m.have || 0) > link(0).seq) link(0).seq = m.have;            // 1.1: same protection on the guest side
+          persist();
+          link(0).out.filter(x => x.seq > (m.have || 0)).forEach(x => rawTo(0, x));
+          if (m.v && opt.version && m.v.split('.')[0] !== opt.version.split('.')[0]) ev('onVersion', m.v);
+          clearTimeout(L.retry); setStatus('open'); ev('onRoster', S.roster); callEveryone(); return;
+        }
+        if (m.t === 'full') { setStatus('full', 'full'); close(true); return; }
+        onData(m, isHost() ? mySeat : 0);
+      });
+      const gone = () => {
+        if (isHost()) { if (mySeat == null || L.conns[mySeat] !== c) return; delete L.conns[mySeat]; const p = rosterEntry(mySeat); if (p) p.online = false; persist(); broadcastRoster(); setStatus(Object.keys(L.conns).length ? 'open' : 'waiting'); }
+        else { if (L.conns[0] !== c) return; delete L.conns[0]; setStatus('reconnecting'); scheduleRetry(); }
+        stopAudioFrom(mySeat);
+      };
+      c.on('close', gone); c.on('error', gone);
+    }
+    function broadcastRoster() { if (!isHost()) return; rawAll({ t: 'roster', roster: S.roster }); ev('onRoster', S.roster); }
+
+    /* ---------- messages ---------- */
+    function onData(m, via) {
+      if (m.t === 'roster') { S.roster = m.roster; persist(); ev('onRoster', S.roster); callEveryone(); return; }
+      if (m.t === 'need') { link(via).out.filter(x => x.seq > m.have).forEach(x => rawTo(via, x)); return; }
+      if (m.t === 'emo' || m.t === 'talk' || m.t === 'vm') {
+        if (isHost()) rawAll(m, via);                     // relay to the other guests
+        if (m.t === 'emo') ev('onEmoji', m.e, m.from);
+        else if (m.t === 'talk') { const p = rosterEntry(m.from); if (p) p.talking = m.on; ev('onTalk', m.from, m.on); }
+        else gotChunk(m);
+        return;
+      }
+      if (m.t === 'voice') { const p = rosterEntry(m.from); if (p) p.voice = m.on; if (isHost()) { rawAll(m, via); broadcastRoster(); } callEveryone(); return; }
+      if (m.t !== 'm') return;
+      const lk = link(via);
+      if (m.seq <= lk.lastIn) return;
+      if (m.seq > lk.lastIn + 1) { rawTo(via, { t: 'need', have: lk.lastIn }); return; }
+      lk.lastIn = m.seq; persist();
+      if (isHost() && max() > 2 && !m.p) for (const p of S.roster) if (p.seat !== 0 && p.seat !== m.from) seqTo(p.seat, m.d, m.from);
+      ev('onMessage', m.d, m.from);
+    }
+    function seqTo(seat, d, from, priv) {
+      const lk = link(seat), m = { t: 'm', seq: ++lk.seq, from, d }; if (priv) m.p = 1;
+      lk.out.push(m); if (lk.out.length > 300) lk.out.splice(0, lk.out.length - 300);
+      rawTo(seat, m);
+    }
+    function send(d) {                                    // reliable, ordered, reaches every other player
+      if (!S) return;
+      if (isHost()) { for (const p of S.roster) if (p.seat !== 0) seqTo(p.seat, d, 0); }
+      else seqTo(0, d, S.seat);
+      persist();
+    }
+    function sendTo(seat, d) {                            // private: host → one guest, or guest → host only (not relayed)
+      if (!S || seat === S.seat) return;
+      if (isHost()) { if (S.roster.some(p => p.seat === seat)) seqTo(seat, d, 0, true); }
+      else seqTo(0, d, S.seat, true);
+      persist();
+    }
+    function emoji(e) { if (S) rawAll({ t: 'emo', e, from: S.seat }); }
+    const isOpen = () => !!S && (isHost() ? Object.values(L.conns).some(c => c.open) : !!(L.conns[0] && L.conns[0].open));
+
+    /* ---------- voice: push-to-talk / open mic (direct mesh) ---------- */
+    async function micOn() {
+      if (L.mic) return true;
+      try { L.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+      catch (e) { ev('onMicError', e && e.name); return false; }
+      L.mic.getAudioTracks().forEach(t => t.enabled = L.openMic);
+      const me = rosterEntry(S.seat); if (me) me.voice = true;
+      const m = { t: 'voice', on: true, from: S.seat }; rawAll(m);
+      callEveryone(); return true;
+    }
+    function callEveryone() {                             // each phone with a mic sends its own one-way audio call to every other phone
+      if (!L.mic || !L.peer || !S) return;
+      for (const p of S.roster) {
+        if (p.seat === S.seat || !p.online || !p.pid) continue;
+        const c = L.calls[p.seat]; if (c && !c._dead) continue;
+        try { const call = L.peer.call(p.pid, L.mic, { metadata: { seat: S.seat } }); L.calls[p.seat] = call; call.on('close', () => { call._dead = true; }); call.on('error', () => { call._dead = true; }); } catch (e) {}
+      }
+    }
+    function onCall(call) {
+      call.answer();                                      // receive only — our own audio goes out on our own call
+      call.on('stream', st => {
+        const seat = call.metadata && call.metadata.seat;
+        let a = L.audio[seat]; if (!a) { a = L.audio[seat] = document.createElement('audio'); a.autoplay = true; a.setAttribute('playsinline', ''); a.style.display = 'none'; document.body.appendChild(a); }
+        a.srcObject = st; const p = a.play(); if (p && p.catch) p.catch(() => ev('onAudioBlocked'));
+      });
+    }
+    function stopAudioFrom(seat) { const a = L.audio[seat]; if (a) { a.srcObject = null; a.remove(); delete L.audio[seat]; } const c = L.calls[seat]; if (c) { try { c.close(); } catch (e) {} delete L.calls[seat]; } }
+    async function talk(on) {
+      if (on && !(await micOn())) return false;
+      if (!L.mic) return false;
+      L.talking = on || L.openMic; L.mic.getAudioTracks().forEach(t => t.enabled = L.talking);
+      rawAll({ t: 'talk', on: L.talking, from: S.seat }); return true;
+    }
+    async function setOpenMic(on) { L.openMic = on; if (on && !(await micOn())) { L.openMic = false; return false; } return talk(on); }
+
+    /* ---------- voice messages ---------- */
+    async function recStart(maxSec) {
+      if (L.rec || !(await micOn())) return false;
+      const track = L.mic.getAudioTracks()[0].clone(); track.enabled = true;
+      const st = new MediaStream([track]), mime = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm', 'audio/mp4'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+      let r; try { r = new MediaRecorder(st, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : undefined); } catch (e) { ev('onMicError', 'rec'); return false; }
+      const parts = [], t0 = Date.now();
+      L.rec = { r, track, t0, timer: setTimeout(() => recStop(), (maxSec || 20) * 1000) };
+      r.ondataavailable = e => { if (e.data && e.data.size) parts.push(e.data); };
+      r.onstop = async () => {
+        track.stop();
+        const dur = Math.round((Date.now() - t0) / 100) / 10, blob = new Blob(parts, { type: r.mimeType || mime || 'audio/webm' });
+        if (L.rec && L.rec.cancel || dur < .4 || !blob.size) { L.rec = null; ev('onRecState', false); return; }
+        L.rec = null; ev('onRecState', false);
+        const data = b64(await blob.arrayBuffer()), id = uid(), CH = 12000, n = Math.ceil(data.length / CH);
+        for (let i = 0; i < n; i++) rawAll({ t: 'vm', id, i, n, dur, mime: blob.type, from: S.seat, data: data.slice(i * CH, (i + 1) * CH) });
+        ev('onVoiceMsg', URL.createObjectURL(blob), dur, S.seat, true);
+      };
+      r.start(); ev('onRecState', true, t0); return true;
+    }
+    function recStop(cancel) { if (!L.rec) return; clearTimeout(L.rec.timer); L.rec.cancel = !!cancel; try { L.rec.r.stop(); } catch (e) {} }
+    function gotChunk(m) {
+      const c = L.chunks[m.id] || (L.chunks[m.id] = { parts: [], got: 0, t: Date.now() });
+      if (c.parts[m.i] == null) { c.parts[m.i] = m.data; c.got++; }
+      if (c.got === m.n) { delete L.chunks[m.id]; const blob = new Blob([unb64(c.parts.join(''))], { type: m.mime || 'audio/webm' }); ev('onVoiceMsg', URL.createObjectURL(blob), m.dur, m.from, false); }
+      for (const k in L.chunks) if (Date.now() - L.chunks[k].t > 60000) delete L.chunks[k];
+    }
+
+    /* ---------- 1.1 heartbeat ----------
+       A phone that closes the app or loses signal often never fires 'close'. Every 3 s we ping
+       everyone; a peer that pings (1.1+) but has been silent for 10 s is treated as gone.
+       Peers on 1.0 never ping, so they are never dropped by mistake. */
+    function beat() {
+      if (!S) return;
+      const now = Date.now();
+      for (const k in L.conns) {
+        const s = +k; rawTo(s, { t: 'ping' });
+        if (!L.hb[s] || now - (L.seen[s] || now) < 10000) continue;
+        L.hb[s] = 0; const c = L.conns[s]; delete L.conns[s]; try { c.close(); } catch (e) {}
+        stopAudioFrom(s);
+        if (isHost()) { const p = rosterEntry(s); if (p) p.online = false; persist(); broadcastRoster(); setStatus(Object.keys(L.conns).length ? 'open' : 'waiting'); }
+        else { setStatus('reconnecting'); scheduleRetry(); }
+      }
+    }
+
+    /* ---------- closing ---------- */
+    function close(keepSession) {
+      clearTimeout(L.retry); clearInterval(L.hbT); L.hbT = null;
+      Object.keys(L.audio).forEach(s => stopAudioFrom(+s));
+      for (const s in L.conns) { try { L.conns[s].close(); } catch (e) {} }
+      L.conns = {};
+      if (L.mic) { L.mic.getTracks().forEach(t => t.stop()); L.mic = null; }
+      L.calls = {}; L.talking = false;
+      try { if (L.peer) L.peer.destroy(); } catch (e) {}
+      L.peer = null; if (!keepSession) S = null; setStatus('off');
+    }
+
+    return {
+      host, join, resume, close, send, sendTo, emoji, isOpen, talk, setOpenMic, recStart, recStop,
+      get status() { return L.status; }, get error() { return L.lastErr; }, get session() { return S; },
+      get seat() { return S ? S.seat : null; }, get roster() { return S ? S.roster : []; },
+      get micReady() { return !!L.mic; }, get talking() { return L.talking; }, get openMic() { return L.openMic; }, get recording() { return !!L.rec; },
+      inviteURL: () => location.origin + location.pathname + '?join=' + (S ? S.code : ''),
+      _L: L
+    };
+  }
+  return { create, genCode, loadPeer };
+})();
+
+/* ===== engines/pen.js ===== */
+/* SportNest — penalty engine (pure, deterministic).
+   Goal plane: x in [-1,1] (left to right), y in [0,0.7] (ground to bar). Randomness comes only from seed+kick index,
+   so two phones that get the same inputs get the same result. Bots read only public info (the opponent's past kicks/dives). */
+(function (root) {
+  'use strict';
+  const GW = 1, GH = 0.7, POST = 0.05, KY0 = 0.25, HRX = 0.25, HRY = 0.2;
+  function prng(sd) { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const flight = p => 0.95 - 0.55 * p;                   // seconds from boot to line
+  const sigma = (p, k) => (0.05 + 0.42 * p * p) * (k == null ? 1 : k);
+  const clampShot = s => ({ tx: clamp(s.tx, -1.25, 1.25), ty: clamp(s.ty, 0.02, 0.85), p: clamp(s.p, 0.25, 1) });
+  const clampKeep = k => ({ kx: clamp(k.kx, -GW, GW), ky: clamp(k.ky, 0.05, GH - 0.05) });
+  const KSLOW = [1.3, 1.12, 1.0, 0.88, 0.74], KREACH = [0.88, 0.96, 1.0, 1.06, 1.14];   // keeper level 1..4 (index 2 = a human keeper)
+const KREACT = [0.6, 0.9, 1, 1.15, 1.3], REACT = 0.5;   // a slow ball gives the keeper time to correct after the kick
+const kLv = l => Math.max(0, Math.min(4, Math.round(l == null ? 2 : l)));
+const diveTime = (kx, ky, kl) => (0.2 + 0.55 * Math.hypot(kx, ky - KY0)) * KSLOW[kLv(kl)];
+  const keeperAt = (keep, T, kl) => { if (!keep) return { x: 0, y: KY0, frac: 0 }; const k = clampKeep(keep), dd = diveTime(k.kx, k.ky, kl), f = Math.min(1, T / dd); return { x: k.kx * f, y: KY0 + (k.ky - KY0) * f, frac: f }; };
+// the keeper's gloves sweep along the dive: distance (in hand-size units) from the ball to the swept path
+function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * KREACH[kLv(kl)], ax = 0, ay = KY0 / ry, bx = kp.x / rx, by = kp.y / ry, px = x / rx, py = y / ry, dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, t = L ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L)) : 0; return Math.hypot(px - (ax + dx * t), py - (ay + dy * t)); }
+  /* o: {seed, i, wind, defenders:[{x,w,h}], skill} → {res, x, y, T, kp} ; res: goal|saved|blocked|post|wide|over */
+  function resolve(shot0, keep, o) {
+    const shot = clampShot(shot0), R = prng((o.seed || 1) * 131 + (o.i || 0) * 7 + 3), s = sigma(shot.p, o.skill);
+    const gx = gauss(R), gy = gauss(R), T = flight(shot.p);
+    let x = shot.tx + gx * s + (o.wind || 0), y = shot.ty + gy * s * 0.8; if (y < 0.03) y = 0.03;
+    const kp = keeperAt(keep, T, o.kl); let res;
+    if ((o.defenders || []).some(d => Math.abs(x - d.x) <= d.w && y <= d.h)) res = 'blocked';
+    else if (Math.abs(x) > GW + POST || y > GH + POST) res = Math.abs(x) > GW + POST ? 'wide' : 'over';
+    else if ((Math.abs(Math.abs(x) - GW) <= POST && y <= GH + POST) || (Math.abs(y - GH) <= POST && Math.abs(x) <= GW)) res = 'post';
+    else res = sweepDist(x, y, kp, o.kl) <= 1 + KREACT[kLv(o.kl)] * Math.max(0, T - 0.45) * REACT / 0.22 ? 'saved' : 'goal';
+    return { res, x, y, T, kp };
+  }
+  /* ---------- bots (public information only) ---------- */
+  // hist = opponent's earlier kicks/dives as [{x,y}] (what everyone already saw)
+  function tendency(hist) { let l = 1, r = 1, c = 1, hi = 1, lo = 1, wl = 0, wr = 0, sxl = 0, syl = 0, sxr = 0, syr = 0; const n = hist.length; hist.forEach((h, i) => { const w = Math.pow(0.8, n - 1 - i); if (h.x < -0.3) { l += w; sxl += h.x * w; syl += h.y * w; wl += w; } else if (h.x > 0.3) { r += w; sxr += h.x * w; syr += h.y * w; wr += w; } else c += w; if (h.y > 0.38) hi += w; else lo += w; }); return { l, r, c, hi, lo, ml: wl ? { x: sxl / wl, y: syl / wl } : { x: -0.65, y: 0.35 }, mr: wr ? { x: sxr / wr, y: syr / wr } : { x: 0.65, y: 0.35 } }; }
+  function botKeep(lvl, hist, R) {
+    const u = (a, b) => a + (b - a) * R(), side = R() < 0.5 ? -1 : 1;
+    if (lvl <= 1) { if (R() < 0.3) return { kx: u(-0.2, 0.2), ky: KY0 }; return clampKeep({ kx: u(-0.9, 0.9), ky: u(0.1, 0.6) }); }
+    const rnd2 = () => R() < 0.15 ? { kx: u(-0.15, 0.15), ky: u(0.2, 0.4) } : clampKeep({ kx: side * u(0.5, 0.9), ky: u(0.15, 0.55) });
+    if (lvl === 2) return rnd2();
+    const q = lvl === 3 ? 0.45 : 0.7;
+    if (R() > q || hist.length < 2) return rnd2();
+    const t = tendency(hist), tot = t.l + t.r + t.c * 0.6, d = R() * tot;
+    const m = d < t.l ? t.ml : d < t.l + t.r ? t.mr : { x: 0, y: KY0 };
+    return clampKeep({ kx: m.x + u(-0.1, 0.1), ky: m.y + u(-0.08, 0.08) });
+  }
+  // ctx = {wind, defenders}; lvl 3-4 compensate wind and avoid defenders
+  function botShot(lvl, hist, R, ctx) {
+    ctx = ctx || {}; const u = (a, b) => a + (b - a) * R(), D = ctx.defenders || [];
+    let tx, ty, p;
+    if (lvl <= 1) { tx = u(-0.9, 0.9); ty = u(0.1, 0.55); p = u(0.3, 0.9); }
+    else if (lvl === 2) { tx = (R() < 0.5 ? -1 : 1) * u(0.45, 0.8); ty = u(0.1, 0.5); p = u(0.55, 0.8); }
+    else {
+      const t = tendency(hist), pl0 = t.r / (t.l + t.r), pl = lvl >= 4 ? (pl0 > 0.5 ? Math.min(0.85, pl0 + 0.1) : Math.max(0.15, pl0 - 0.1)) : pl0, side = R() < pl ? -1 : 1;   // go where the keeper dives less
+      if (lvl === 3) { tx = side * u(0.5, 0.85); ty = u(0.12, 0.45); p = u(0.4, 0.8); } else { tx = side * u(0.68, 0.82); ty = (t.lo >= t.hi ? u(0.4, 0.5) : u(0.12, 0.22)); p = u(0.4, 0.65); }
+    }
+    if (lvl >= 3) {
+      tx -= (ctx.wind || 0);
+      for (let tries = 0; tries < 4; tries++) { const hit = D.find(d => Math.abs(tx - d.x) <= d.w + 0.12 && ty <= d.h + 0.12); if (!hit) break; tx = -Math.sign(hit.x || 1) * u(0.55, 0.85); ty = u(0.4, 0.58); }
+    }
+    return clampShot({ tx, ty, p });
+  }
+  /* ---------- shootout (cpu / two / online) ---------- */
+  const BEST = 5, SUDDEN_MAX = 8;
+  // st = {g:[a,b], k:[a,b]}; returns null | 0 | 1 | 'draw'
+  function decided(st) {
+    const g = st.g, k = st.k;
+    if (k[0] <= BEST && k[1] <= BEST) { for (let a = 0; a < 2; a++) { const b = 1 - a; if (g[a] > g[b] + (BEST - k[b])) return a; } }
+    if (k[0] === k[1] && k[0] >= BEST) { if (g[0] !== g[1]) return g[0] > g[1] ? 0 : 1; if (k[0] >= BEST + SUDDEN_MAX) return 'draw'; }
+    return null;
+  }
+  const shooterOf = i => i % 2;
+  /* ---------- solo levels ---------- */
+  const SKILL = [1, 1.3, 1.1, 1.0, 0.78];   // bot kicker accuracy multiplier by level (lower = steadier); a human kicker uses 1
+  function makeLevels() {
+    const K = [1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4], out = [];
+    for (let n = 1; n <= 24; n++) {
+      const t = (n - 1) / 23, kicks = n <= 6 ? 5 : n <= 12 ? 6 : n <= 18 ? 7 : 8;
+      const w = n < 6 ? 0 : Math.round((((n * 37) % 7) - 3) / 3 * 0.22 * Math.min(1, (n - 5) / 12) * 100) / 100;
+      const defs = []; if (n >= 9 && n % 3 === 1) defs.push({ x: (n % 2 ? -1 : 1) * 0.5, w: 0.12, h: 0.4 }); if (n === 20) defs.push({ x: 0.82, w: 0.1, h: 0.4 });
+      out.push({ n, seed: n * 97 + 11, kicks, goal: Math.min(kicks, Math.round(kicks * (0.4 + 0.13 * t))), keeper: K[n - 1], wind: w, defenders: defs, skill: 1 });
+    }
+    return out;
+  }
+  // after `taken` kicks with `goals` goals → {done, win, stars}
+  function levelState(lv, goals, taken) {
+    const left = lv.kicks - taken;
+    if (goals + left < lv.goal) return { done: true, win: false, stars: 0 };
+    if (left <= 0) return { done: true, win: goals >= lv.goal, stars: goals >= lv.goal ? (goals >= Math.min(lv.kicks, lv.goal + 2) ? 3 : goals >= Math.min(lv.kicks, lv.goal + 1) ? 2 : 1) : 0 };
+    return { done: false };
+  }
+  const API = { GW, GH, POST, KY0, HRX, HRY, prng, gauss, clamp, flight, sigma, clampShot, clampKeep, diveTime, keeperAt, resolve, botKeep, botShot, tendency, decided, shooterOf, BEST, SKILL, makeLevels, levelState };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Pen = API;
+})(typeof self !== 'undefined' ? self : this);
+
+/* ===== src/i18n.js ===== */
+/* SportNest — shell strings: he, en, ru, es, ar. Missing key falls back to English. Game strings live in i18n_<game>.js */
+const LANG = {
+he: {
+ "dir": "rtl",
+ "name": "השם שלי",
+ "app_sub": "משחקי ספורט ותחרות",
+ "tagline": "לבד, מול המחשב, בשניים או אונליין",
+ "m_solo": "שלבים",
+ "m_solo_d": "מהקל לקשה, עם כוכבים",
+ "m_cpu": "מול המחשב",
+ "m_cpu_d": "ארבע רמות קושי",
+ "m_two": "שניים בטלפון",
+ "m_two_d": "הטלפון שוכב, כל אחד בצד שלו",
+ "m_online": "אונליין",
+ "m_online_d": "עם חבר, כולל קול",
+ "back": "חזרה",
+ "home": "בית",
+ "settings": "הגדרות",
+ "lang": "שפה",
+ "theme": "עיצוב",
+ "sound": "צלילים",
+ "vib": "רטט",
+ "on": "פעיל",
+ "off": "כבוי",
+ "reset_all": "מחיקת כל ההתקדמות",
+ "reset_ask": "למחוק את כל השלבים והכוכבים?",
+ "yes": "כן",
+ "no": "לא",
+ "cancel": "ביטול",
+ "ok": "אישור",
+ "close": "סגירה",
+ "pause": "הפסקה",
+ "resume": "המשך",
+ "restart": "התחלה מחדש",
+ "quit": "יציאה",
+ "next_level": "לשלב הבא",
+ "retry": "עוד פעם",
+ "rematch": "משחק חוזר",
+ "level": "שלב {n}",
+ "world": "עולם {n}",
+ "locked": "נעול",
+ "stars": "כוכבים",
+ "win": "ניצחת!",
+ "lose": "לא הפעם",
+ "draw": "תיקו",
+ "done": "השלב הושלם!",
+ "failed": "השלב נכשל",
+ "time_up": "נגמר הזמן",
+ "lv_easy": "קל",
+ "lv_normal": "בינוני",
+ "lv_hard": "קשה",
+ "lv_expert": "מומחה",
+ "lv_easy_d": "מתאים להתחלה",
+ "lv_normal_d": "חזק מהקל ברוב המשחקים",
+ "lv_hard_d": "חזק מהבינוני ברוב המשחקים",
+ "lv_expert_d": "קורא את הנטיות שלך ומשחק חד",
+ "choose_diff": "בחרו רמה",
+ "you": "אני",
+ "cpu": "מחשב",
+ "p1": "שחקן 1",
+ "p2": "שחקן 2",
+ "p_wins": "{n} ניצח!",
+ "go": "קדימה!",
+ "ready": "מוכנים?",
+ "on_host": "פתיחת חדר",
+ "on_join": "הצטרפות עם קוד",
+ "on_code": "קוד החדר",
+ "on_enter": "הקלידו את הקוד",
+ "on_invite": "הזמנה בוואטסאפ",
+ "on_copy": "העתקת קישור",
+ "on_copied": "הקישור הועתק",
+ "on_connecting": "מתחבר…",
+ "on_waiting": "ממתין לחבר…",
+ "on_open": "מחוברים",
+ "on_reconn": "מתחבר מחדש…",
+ "on_notfound": "החדר לא נמצא. בדקו את הקוד",
+ "on_full": "החדר מלא",
+ "on_err": "אין חיבור. בדקו אינטרנט",
+ "on_start": "התחלת משחק",
+ "on_wait_host": "ממתין שהמארח יתחיל…",
+ "on_leave": "יציאה מהחדר",
+ "on_ver": "לחבר יש גרסה אחרת. כדאי ששניכם תעדכנו",
+ "on_left": "החבר התנתק",
+ "on_opp_over": "החבר הפסיד",
+ "on_you_over": "הפסדת",
+ "seat_host": "מארח",
+ "seat_guest": "אורח",
+ "seat_empty": "פנוי",
+ "seat_off": "לא מחובר",
+ "v_ptt": "לחצו ודברו",
+ "v_open": "מיקרופון פתוח",
+ "v_msg": "הודעה קולית",
+ "v_denied": "אין הרשאה למיקרופון",
+ "v_tap": "הקישו כדי לשמוע",
+ "v_talking": "{n} מדבר…",
+ "v_privacy": "הקול עובר ישירות בין הטלפונים ולא נשמר",
+ "exit_again": "לחצו שוב כדי לצאת",
+ "g1t": "ברוכים הבאים",
+ "g1": "אוסף משחקי ספורט: פנדלים ועוד. כל משחק לבד, מול המחשב, בשניים או אונליין.",
+ "g2t": "שלבים וכוכבים",
+ "g2": "כל משחק מתחיל קל ומתקשה. אוספים כוכבים ופותחים שלבים חדשים.",
+ "g3t": "אצבעות גדולות",
+ "g3": "גוררים כדי לכוון, מחזיקים כדי לטעון כוח, ומשחררים כדי לבעוט. כוח גבוה מהיר יותר אבל פחות מדויק.",
+ "skip": "דלג",
+ "next": "הבא",
+ "start": "מתחילים",
+ "about": "אודות",
+ "about_t": "משחקי ספורט בהשראת משחקים קלאסיים. השמות, הדמויות והציורים שלנו, ואינם קשורים לשחקנים, קבוצות או מותגים אמיתיים.",
+ "privacy": "מדיניות פרטיות",
+ "cont": "המשך",
+ "daily": "אתגר יומי",
+ "daily_done": "הושלם היום ✓",
+ "streak_n": "רצף {n} ימים",
+ "rules": "חוקים",
+ "album": "אלבום",
+ "stats": "הישגים",
+ "me": "השחקן שלי",
+ "pick_av": "בחרו חיה",
+ "look": "מראה",
+ "th_gold": "זהב",
+ "th_silver": "כסף",
+ "th_emerald": "אזמרגד",
+ "th_ruby": "רובי",
+ "th_ocean": "אוקיינוס",
+ "daymode": "יום / לילה",
+ "night": "לילה",
+ "day": "יום",
+ "gameplay": "משחק",
+ "backup": "גיבוי ושחזור",
+ "backup_d": "הכול נשמר על הטלפון בלבד. קובץ גיבוי שומר הגדרות, שלבים, כוכבים ומדבקות.",
+ "export": "ייצוא",
+ "import": "שחזור",
+ "exported": "קובץ הגיבוי נשמר",
+ "bad_file": "הקובץ לא מתאים",
+ "import_q": "לשחזר גיבוי של {n} מתאריך {d}? זה יחליף את ההתקדמות הנוכחית.",
+ "guide": "מדריך",
+ "reset_all2": "מחיקת הכול",
+ "reset_q1": "למחוק את כל ההתקדמות, ההגדרות והמדבקות?",
+ "reset_q2": "בטוחים? אי אפשר לבטל.",
+ "reset_yes": "כן, למחוק הכול",
+ "a_ver": "גרסה",
+ "a_dev": "פיתוח",
+ "a_plat": "פלטפורמה",
+ "a_store": "אחסון",
+ "a_local": "על המכשיר בלבד",
+ "a_levels": "שלבים",
+ "a_lic": "רישיון",
+ "a_storeLink": "חנות AppNest",
+ "a_share": "שתפו את האפליקציה",
+ "a_feedback": "שלחו משוב",
+ "a_privacy": "מדיניות פרטיות",
+ "install": "התקנה על המסך",
+ "a_disc": "משחקי ספורט בהשראת משחקים קלאסיים. השמות, הדמויות והציורים מקוריים ואינם קשורים לשחקנים, קבוצות או מותגים אמיתיים. אונליין עובד ישירות בין הטלפונים, בלי שרת ובלי חשבון.",
+ "share_txt": "SportNest — משחקי ספורט ותחרות. {n} מזמין/ה אותך לשחק:",
+ "copied": "הקישור הועתק",
+ "s_streak": "רצף נוכחי",
+ "s_best": "רצף שיא",
+ "s_dailies": "אתגרים",
+ "s_done": "שלבים",
+ "s_stars": "כוכבים",
+ "s_three": "3 כוכבים",
+ "s_wins": "ניצחונות",
+ "s_games": "משחקים",
+ "album_d": "אוספים מדבקות על הישגים. הקישו על מדבקה לראות איך משיגים אותה.",
+ "st_stars10": "10 כוכבים",
+ "std_stars10": "אספו 10 כוכבים",
+ "st_stars50": "50 כוכבים",
+ "std_stars50": "אספו 50 כוכבים",
+ "st_stars150": "150 כוכבים",
+ "std_stars150": "אספו 150 כוכבים",
+ "st_three": "שלושה כוכבים",
+ "std_three": "סיימו שלב עם 3 כוכבים",
+ "st_cpu": "מנצח המחשב",
+ "std_cpu": "נצחו את המחשב בקרב",
+ "st_two": "שניים על טלפון",
+ "std_two": "שחקו שניים על טלפון אחד",
+ "st_online": "אונליין",
+ "std_online": "שחקו אונליין עם חבר",
+ "st_daily1": "אתגר ראשון",
+ "std_daily1": "השלימו אתגר יומי",
+ "st_streak3": "רצף 3",
+ "std_streak3": "אתגר יומי 3 ימים ברצף",
+ "st_streak7": "רצף שבוע",
+ "std_streak7": "אתגר יומי 7 ימים ברצף",
+ "g4t": "אתגר יומי ומדבקות",
+ "g4": "כל יום אתגר חדש. רצף ימים והישגים מקבלים מדבקות באלבום.",
+ "g5t": "עם חבר",
+ "g5": "שניים על טלפון אחד, או אונליין עם קול וללא שרת. הכול עובד גם בלי אינטרנט, חוץ מהאונליין.",
+ "letsplay": "יוצאים לדרך",
+ "s_level": "שלב",
+ "bot": "המחשב",
+ "opp": "היריב",
+},
+en: {
+ "dir": "ltr",
+ "name": "My name",
+ "app_sub": "Sports & competition games",
+ "tagline": "Solo, vs computer, two players or online",
+ "m_solo": "Levels",
+ "m_solo_d": "Easy to hard, with stars",
+ "m_cpu": "Vs computer",
+ "m_cpu_d": "Four difficulty levels",
+ "m_two": "Two on one phone",
+ "m_two_d": "Phone lies flat, one side each",
+ "m_online": "Online",
+ "m_online_d": "With a friend, with voice",
+ "back": "Back",
+ "home": "Home",
+ "settings": "Settings",
+ "lang": "Language",
+ "theme": "Theme",
+ "sound": "Sounds",
+ "vib": "Vibration",
+ "on": "On",
+ "off": "Off",
+ "reset_all": "Erase all progress",
+ "reset_ask": "Erase all levels and stars?",
+ "yes": "Yes",
+ "no": "No",
+ "cancel": "Cancel",
+ "ok": "OK",
+ "close": "Close",
+ "pause": "Pause",
+ "resume": "Resume",
+ "restart": "Restart",
+ "quit": "Quit",
+ "next_level": "Next level",
+ "retry": "Try again",
+ "rematch": "Rematch",
+ "level": "Level {n}",
+ "world": "World {n}",
+ "locked": "Locked",
+ "stars": "Stars",
+ "win": "You win!",
+ "lose": "Not this time",
+ "draw": "Draw",
+ "done": "Level complete!",
+ "failed": "Level failed",
+ "time_up": "Time is up",
+ "lv_easy": "Easy",
+ "lv_normal": "Normal",
+ "lv_hard": "Hard",
+ "lv_expert": "Expert",
+ "lv_easy_d": "Good for starting",
+ "lv_normal_d": "Stronger than Easy in most games",
+ "lv_hard_d": "Stronger than Normal in most games",
+ "lv_expert_d": "Reads your habits and plays sharp",
+ "choose_diff": "Choose a level",
+ "you": "Me",
+ "cpu": "Computer",
+ "p1": "Player 1",
+ "p2": "Player 2",
+ "p_wins": "{n} wins!",
+ "go": "Go!",
+ "ready": "Ready?",
+ "on_host": "Open a room",
+ "on_join": "Join with a code",
+ "on_code": "Room code",
+ "on_enter": "Type the code",
+ "on_invite": "Invite on WhatsApp",
+ "on_copy": "Copy link",
+ "on_copied": "Link copied",
+ "on_connecting": "Connecting…",
+ "on_waiting": "Waiting for a friend…",
+ "on_open": "Connected",
+ "on_reconn": "Reconnecting…",
+ "on_notfound": "Room not found. Check the code",
+ "on_full": "The room is full",
+ "on_err": "No connection. Check your internet",
+ "on_start": "Start game",
+ "on_wait_host": "Waiting for the host to start…",
+ "on_leave": "Leave room",
+ "on_ver": "Your friend has another version. Both should update",
+ "on_left": "Your friend disconnected",
+ "on_opp_over": "Your friend lost",
+ "on_you_over": "You lost",
+ "seat_host": "Host",
+ "seat_guest": "Guest",
+ "seat_empty": "Empty",
+ "seat_off": "Offline",
+ "v_ptt": "Hold to talk",
+ "v_open": "Open mic",
+ "v_msg": "Voice message",
+ "v_denied": "No microphone permission",
+ "v_tap": "Tap to listen",
+ "v_talking": "{n} is talking…",
+ "v_privacy": "Voice goes directly between phones and is not stored",
+ "exit_again": "Press back again to exit",
+ "g1t": "Welcome",
+ "g1": "A collection of sports games: penalty kicks and more. Every game solo, vs computer, two on one phone or online.",
+ "g2t": "Levels and stars",
+ "g2": "Every game starts easy and gets harder. Collect stars to unlock new levels.",
+ "g3t": "Big fingers",
+ "g3": "Drag to aim, hold to charge power, release to shoot. More power is faster but less accurate.",
+ "skip": "Skip",
+ "next": "Next",
+ "start": "Start",
+ "about": "About",
+ "about_t": "Sports games inspired by classic ones. Names, characters and art are our own and not linked to real players, teams or brands.",
+ "privacy": "Privacy policy",
+ "cont": "Continue",
+ "daily": "Daily challenge",
+ "daily_done": "Done today ✓",
+ "streak_n": "{n}-day streak",
+ "rules": "Rules",
+ "album": "Album",
+ "stats": "Stats",
+ "me": "My player",
+ "pick_av": "Pick an animal",
+ "look": "Look",
+ "th_gold": "Gold",
+ "th_silver": "Silver",
+ "th_emerald": "Emerald",
+ "th_ruby": "Ruby",
+ "th_ocean": "Ocean",
+ "daymode": "Day / night",
+ "night": "Night",
+ "day": "Day",
+ "gameplay": "Gameplay",
+ "backup": "Backup & restore",
+ "backup_d": "Everything stays on this phone. A backup file keeps settings, levels, stars and stickers.",
+ "export": "Export",
+ "import": "Restore",
+ "exported": "Backup file saved",
+ "bad_file": "That file does not fit",
+ "import_q": "Restore the backup by {n} from {d}? This replaces current progress.",
+ "guide": "Guide",
+ "reset_all2": "Erase everything",
+ "reset_q1": "Erase all progress, settings and stickers?",
+ "reset_q2": "Are you sure? This cannot be undone.",
+ "reset_yes": "Yes, erase all",
+ "a_ver": "Version",
+ "a_dev": "Developer",
+ "a_plat": "Platform",
+ "a_store": "Storage",
+ "a_local": "On this device only",
+ "a_levels": "Levels",
+ "a_lic": "License",
+ "a_storeLink": "AppNest store",
+ "a_share": "Share the app",
+ "a_feedback": "Send feedback",
+ "a_privacy": "Privacy policy",
+ "install": "Add to home screen",
+ "a_disc": "Sports games inspired by classic ones. Names, characters and art are original and not linked to real players, teams or brands. Online runs directly between phones, with no server and no account.",
+ "share_txt": "SportNest — sports & competition games. {n} invites you to play:",
+ "copied": "Link copied",
+ "s_streak": "Current streak",
+ "s_best": "Best streak",
+ "s_dailies": "Challenges",
+ "s_done": "Levels",
+ "s_stars": "Stars",
+ "s_three": "3 stars",
+ "s_wins": "Wins",
+ "s_games": "Games",
+ "album_d": "Collect stickers for achievements. Tap a sticker to see how to earn it.",
+ "st_stars10": "10 stars",
+ "std_stars10": "Collect 10 stars",
+ "st_stars50": "50 stars",
+ "std_stars50": "Collect 50 stars",
+ "st_stars150": "150 stars",
+ "std_stars150": "Collect 150 stars",
+ "st_three": "Three stars",
+ "std_three": "Finish a level with 3 stars",
+ "st_cpu": "Computer beaten",
+ "std_cpu": "Beat the computer in a duel",
+ "st_two": "Two on a phone",
+ "std_two": "Play two on one phone",
+ "st_online": "Online",
+ "std_online": "Play online with a friend",
+ "st_daily1": "First challenge",
+ "std_daily1": "Complete a daily challenge",
+ "st_streak3": "Streak 3",
+ "std_streak3": "Daily challenge 3 days in a row",
+ "st_streak7": "Week streak",
+ "std_streak7": "Daily challenge 7 days in a row",
+ "g4t": "Daily challenge & stickers",
+ "g4": "A new challenge every day. Streaks and achievements earn stickers in your album.",
+ "g5t": "With a friend",
+ "g5": "Two on one phone, or online with voice and no server. Everything works offline, except online play.",
+ "letsplay": "Let's play",
+ "s_level": "Level",
+ "bot": "Computer",
+ "opp": "Opponent",
+},
+ru: {
+ "dir": "ltr",
+ "name": "Моё имя",
+ "app_sub": "Спортивные игры и соревнования",
+ "tagline": "Один, против компьютера, вдвоём или онлайн",
+ "m_solo": "Уровни",
+ "m_solo_d": "От лёгких к сложным, со звёздами",
+ "m_cpu": "Против компьютера",
+ "m_cpu_d": "Четыре уровня сложности",
+ "m_two": "Двое на одном телефоне",
+ "m_two_d": "Телефон лежит, у каждого своя сторона",
+ "m_online": "Онлайн",
+ "m_online_d": "С другом, с голосом",
+ "back": "Назад",
+ "home": "Домой",
+ "settings": "Настройки",
+ "lang": "Язык",
+ "theme": "Тема",
+ "sound": "Звуки",
+ "vib": "Вибрация",
+ "on": "Вкл",
+ "off": "Выкл",
+ "reset_all": "Стереть весь прогресс",
+ "reset_ask": "Стереть все уровни и звёзды?",
+ "yes": "Да",
+ "no": "Нет",
+ "cancel": "Отмена",
+ "ok": "ОК",
+ "close": "Закрыть",
+ "pause": "Пауза",
+ "resume": "Продолжить",
+ "restart": "Сначала",
+ "quit": "Выйти",
+ "next_level": "Следующий уровень",
+ "retry": "Ещё раз",
+ "rematch": "Реванш",
+ "level": "Уровень {n}",
+ "world": "Мир {n}",
+ "locked": "Закрыто",
+ "stars": "Звёзды",
+ "win": "Победа!",
+ "lose": "Не в этот раз",
+ "draw": "Ничья",
+ "done": "Уровень пройден!",
+ "failed": "Уровень провален",
+ "time_up": "Время вышло",
+ "lv_easy": "Лёгкий",
+ "lv_normal": "Средний",
+ "lv_hard": "Сложный",
+ "lv_expert": "Эксперт",
+ "lv_easy_d": "Для начала",
+ "lv_normal_d": "Чаще всего сильнее лёгкого",
+ "lv_hard_d": "Чаще всего сильнее среднего",
+ "lv_expert_d": "Читает ваши привычки и играет остро",
+ "choose_diff": "Выберите уровень",
+ "you": "Я",
+ "cpu": "Компьютер",
+ "p1": "Игрок 1",
+ "p2": "Игрок 2",
+ "p_wins": "Победил {n}!",
+ "go": "Вперёд!",
+ "ready": "Готовы?",
+ "on_host": "Открыть комнату",
+ "on_join": "Войти по коду",
+ "on_code": "Код комнаты",
+ "on_enter": "Введите код",
+ "on_invite": "Пригласить в WhatsApp",
+ "on_copy": "Копировать ссылку",
+ "on_copied": "Ссылка скопирована",
+ "on_connecting": "Подключение…",
+ "on_waiting": "Ждём друга…",
+ "on_open": "Подключено",
+ "on_reconn": "Переподключение…",
+ "on_notfound": "Комната не найдена. Проверьте код",
+ "on_full": "Комната заполнена",
+ "on_err": "Нет связи. Проверьте интернет",
+ "on_start": "Начать игру",
+ "on_wait_host": "Ждём, пока хозяин начнёт…",
+ "on_leave": "Выйти из комнаты",
+ "on_ver": "У друга другая версия. Обновите обоим",
+ "on_left": "Друг отключился",
+ "on_opp_over": "Друг проиграл",
+ "on_you_over": "Вы проиграли",
+ "seat_host": "Хозяин",
+ "seat_guest": "Гость",
+ "seat_empty": "Свободно",
+ "seat_off": "Не в сети",
+ "v_ptt": "Держите и говорите",
+ "v_open": "Открытый микрофон",
+ "v_msg": "Голосовое сообщение",
+ "v_denied": "Нет доступа к микрофону",
+ "v_tap": "Нажмите, чтобы послушать",
+ "v_talking": "{n} говорит…",
+ "v_privacy": "Голос идёт напрямую между телефонами и не сохраняется",
+ "exit_again": "Нажмите «Назад» ещё раз для выхода",
+ "g1t": "Добро пожаловать",
+ "g1": "Сборник спортивных игр: пенальти и не только. Каждая игра: один, против компьютера, вдвоём или онлайн.",
+ "g2t": "Уровни и звёзды",
+ "g2": "Каждая игра начинается легко и усложняется. Собирайте звёзды и открывайте уровни.",
+ "g3t": "Большие пальцы",
+ "g3": "Тяните, чтобы прицелиться, удерживайте для силы, отпустите для удара. Больше силы — быстрее, но менее точно.",
+ "skip": "Пропустить",
+ "next": "Далее",
+ "start": "Начать",
+ "about": "О приложении",
+ "about_t": "Спортивные игры по мотивам классики. Названия, персонажи и графика наши и не связаны с реальными игроками, командами и брендами.",
+ "privacy": "Политика конфиденциальности",
+ "cont": "Продолжить",
+ "daily": "Задание дня",
+ "daily_done": "Сегодня выполнено ✓",
+ "streak_n": "Серия: {n} дн.",
+ "rules": "Правила",
+ "album": "Альбом",
+ "stats": "Успехи",
+ "me": "Мой игрок",
+ "pick_av": "Выберите зверька",
+ "look": "Вид",
+ "th_gold": "Золото",
+ "th_silver": "Серебро",
+ "th_emerald": "Изумруд",
+ "th_ruby": "Рубин",
+ "th_ocean": "Океан",
+ "daymode": "День / ночь",
+ "night": "Ночь",
+ "day": "День",
+ "gameplay": "Игра",
+ "backup": "Резервная копия",
+ "backup_d": "Всё хранится только на этом телефоне. Файл копии сохраняет настройки, уровни, звёзды и наклейки.",
+ "export": "Экспорт",
+ "import": "Восстановить",
+ "exported": "Файл копии сохранён",
+ "bad_file": "Файл не подходит",
+ "import_q": "Восстановить копию {n} от {d}? Текущий прогресс будет заменён.",
+ "guide": "Руководство",
+ "reset_all2": "Стереть всё",
+ "reset_q1": "Стереть весь прогресс, настройки и наклейки?",
+ "reset_q2": "Точно? Отменить нельзя.",
+ "reset_yes": "Да, стереть всё",
+ "a_ver": "Версия",
+ "a_dev": "Разработчик",
+ "a_plat": "Платформа",
+ "a_store": "Хранение",
+ "a_local": "Только на устройстве",
+ "a_levels": "Уровни",
+ "a_lic": "Лицензия",
+ "a_storeLink": "Магазин AppNest",
+ "a_share": "Поделиться приложением",
+ "a_feedback": "Отправить отзыв",
+ "a_privacy": "Политика конфиденциальности",
+ "install": "На главный экран",
+ "a_disc": "Спортивные игры по мотивам классики. Названия, персонажи и графика оригинальные и не связаны с реальными игроками, командами и брендами. Онлайн работает напрямую между телефонами, без сервера и аккаунта.",
+ "share_txt": "SportNest — спортивные игры. {n} приглашает играть:",
+ "copied": "Ссылка скопирована",
+ "s_streak": "Текущая серия",
+ "s_best": "Лучшая серия",
+ "s_dailies": "Задания",
+ "s_done": "Уровни",
+ "s_stars": "Звёзды",
+ "s_three": "3 звезды",
+ "s_wins": "Победы",
+ "s_games": "Игры",
+ "album_d": "Собирайте наклейки за достижения. Нажмите на наклейку, чтобы увидеть условие.",
+ "st_stars10": "10 звёзд",
+ "std_stars10": "Соберите 10 звёзд",
+ "st_stars50": "50 звёзд",
+ "std_stars50": "Соберите 50 звёзд",
+ "st_stars150": "150 звёзд",
+ "std_stars150": "Соберите 150 звёзд",
+ "st_three": "Три звезды",
+ "std_three": "Пройдите уровень на 3 звезды",
+ "st_cpu": "Компьютер побеждён",
+ "std_cpu": "Победите компьютер в дуэли",
+ "st_two": "Двое на телефоне",
+ "std_two": "Сыграйте вдвоём на одном телефоне",
+ "st_online": "Онлайн",
+ "std_online": "Сыграйте онлайн с другом",
+ "st_daily1": "Первое задание",
+ "std_daily1": "Выполните задание дня",
+ "st_streak3": "Серия 3",
+ "std_streak3": "Задание дня 3 дня подряд",
+ "st_streak7": "Серия неделя",
+ "std_streak7": "Задание дня 7 дней подряд",
+ "g4t": "Задание дня и наклейки",
+ "g4": "Каждый день новое задание. Серии и достижения дают наклейки в альбоме.",
+ "g5t": "С другом",
+ "g5": "Вдвоём на одном телефоне или онлайн с голосом и без сервера. Всё работает без интернета, кроме онлайна.",
+ "letsplay": "Играем",
+ "s_level": "Уровень",
+ "bot": "Компьютер",
+ "opp": "Соперник",
+},
+es: {
+ "dir": "ltr",
+ "name": "Mi nombre",
+ "app_sub": "Juegos de deporte y competición",
+ "tagline": "Solo, contra la consola, de a dos u online",
+ "m_solo": "Niveles",
+ "m_solo_d": "De fácil a difícil, con estrellas",
+ "m_cpu": "Contra el móvil",
+ "m_cpu_d": "Cuatro niveles de dificultad",
+ "m_two": "Dos en un móvil",
+ "m_two_d": "El móvil plano, un lado para cada uno",
+ "m_online": "Online",
+ "m_online_d": "Con un amigo, con voz",
+ "back": "Atrás",
+ "home": "Inicio",
+ "settings": "Ajustes",
+ "lang": "Idioma",
+ "theme": "Tema",
+ "sound": "Sonidos",
+ "vib": "Vibración",
+ "on": "Sí",
+ "off": "No",
+ "reset_all": "Borrar todo el progreso",
+ "reset_ask": "¿Borrar todos los niveles y estrellas?",
+ "yes": "Sí",
+ "no": "No",
+ "cancel": "Cancelar",
+ "ok": "Aceptar",
+ "close": "Cerrar",
+ "pause": "Pausa",
+ "resume": "Continuar",
+ "restart": "Reiniciar",
+ "quit": "Salir",
+ "next_level": "Siguiente nivel",
+ "retry": "Otra vez",
+ "rematch": "Revancha",
+ "level": "Nivel {n}",
+ "world": "Mundo {n}",
+ "locked": "Bloqueado",
+ "stars": "Estrellas",
+ "win": "¡Ganaste!",
+ "lose": "Esta vez no",
+ "draw": "Empate",
+ "done": "¡Nivel superado!",
+ "failed": "Nivel fallido",
+ "time_up": "Se acabó el tiempo",
+ "lv_easy": "Fácil",
+ "lv_normal": "Normal",
+ "lv_hard": "Difícil",
+ "lv_expert": "Experto",
+ "lv_easy_d": "Para empezar",
+ "lv_normal_d": "Más fuerte que el Fácil casi siempre",
+ "lv_hard_d": "Más fuerte que el Normal casi siempre",
+ "lv_expert_d": "Lee tus costumbres y juega fino",
+ "choose_diff": "Elige un nivel",
+ "you": "Yo",
+ "cpu": "Móvil",
+ "p1": "Jugador 1",
+ "p2": "Jugador 2",
+ "p_wins": "¡Gana {n}!",
+ "go": "¡Ya!",
+ "ready": "¿Listos?",
+ "on_host": "Abrir sala",
+ "on_join": "Entrar con código",
+ "on_code": "Código de sala",
+ "on_enter": "Escribe el código",
+ "on_invite": "Invitar por WhatsApp",
+ "on_copy": "Copiar enlace",
+ "on_copied": "Enlace copiado",
+ "on_connecting": "Conectando…",
+ "on_waiting": "Esperando a un amigo…",
+ "on_open": "Conectados",
+ "on_reconn": "Reconectando…",
+ "on_notfound": "Sala no encontrada. Revisa el código",
+ "on_full": "La sala está llena",
+ "on_err": "Sin conexión. Revisa tu internet",
+ "on_start": "Empezar partida",
+ "on_wait_host": "Esperando a que el anfitrión empiece…",
+ "on_leave": "Salir de la sala",
+ "on_ver": "Tu amigo tiene otra versión. Actualicen ambos",
+ "on_left": "Tu amigo se desconectó",
+ "on_opp_over": "Tu amigo perdió",
+ "on_you_over": "Perdiste",
+ "seat_host": "Anfitrión",
+ "seat_guest": "Invitado",
+ "seat_empty": "Libre",
+ "seat_off": "Sin conexión",
+ "v_ptt": "Mantén para hablar",
+ "v_open": "Micrófono abierto",
+ "v_msg": "Mensaje de voz",
+ "v_denied": "Sin permiso de micrófono",
+ "v_tap": "Toca para escuchar",
+ "v_talking": "{n} está hablando…",
+ "v_privacy": "La voz va directa entre móviles y no se guarda",
+ "exit_again": "Pulsa atrás otra vez para salir",
+ "g1t": "Bienvenido",
+ "g1": "Una colección de juegos deportivos: penaltis y más. Cada juego solo, contra la consola, de a dos u online.",
+ "g2t": "Niveles y estrellas",
+ "g2": "Cada juego empieza fácil y se complica. Reúne estrellas para abrir niveles.",
+ "g3t": "Dedos grandes",
+ "g3": "Arrastra para apuntar, mantén para cargar fuerza y suelta para chutar. Más fuerza es más rápido pero menos preciso.",
+ "skip": "Omitir",
+ "next": "Siguiente",
+ "start": "Empezar",
+ "about": "Acerca de",
+ "about_t": "Juegos deportivos inspirados en clásicos. Los nombres, personajes y arte son propios y no tienen relación con jugadores, equipos o marcas reales.",
+ "privacy": "Política de privacidad",
+ "cont": "Continuar",
+ "daily": "Reto diario",
+ "daily_done": "Hecho hoy ✓",
+ "streak_n": "Racha de {n} días",
+ "rules": "Reglas",
+ "album": "Álbum",
+ "stats": "Logros",
+ "me": "Mi jugador",
+ "pick_av": "Elige un animal",
+ "look": "Aspecto",
+ "th_gold": "Oro",
+ "th_silver": "Plata",
+ "th_emerald": "Esmeralda",
+ "th_ruby": "Rubí",
+ "th_ocean": "Océano",
+ "daymode": "Día / noche",
+ "night": "Noche",
+ "day": "Día",
+ "gameplay": "Juego",
+ "backup": "Copia y restauración",
+ "backup_d": "Todo se queda en este teléfono. El archivo guarda ajustes, niveles, estrellas y pegatinas.",
+ "export": "Exportar",
+ "import": "Restaurar",
+ "exported": "Copia guardada",
+ "bad_file": "Ese archivo no sirve",
+ "import_q": "¿Restaurar la copia de {n} del {d}? Reemplaza el progreso actual.",
+ "guide": "Guía",
+ "reset_all2": "Borrar todo",
+ "reset_q1": "¿Borrar todo el progreso, ajustes y pegatinas?",
+ "reset_q2": "¿Seguro? No se puede deshacer.",
+ "reset_yes": "Sí, borrar todo",
+ "a_ver": "Versión",
+ "a_dev": "Desarrollo",
+ "a_plat": "Plataforma",
+ "a_store": "Almacenamiento",
+ "a_local": "Solo en el dispositivo",
+ "a_levels": "Niveles",
+ "a_lic": "Licencia",
+ "a_storeLink": "Tienda AppNest",
+ "a_share": "Compartir la app",
+ "a_feedback": "Enviar comentarios",
+ "a_privacy": "Política de privacidad",
+ "install": "Añadir a inicio",
+ "a_disc": "Juegos deportivos inspirados en clásicos. Nombres, personajes y arte originales, sin relación con jugadores, equipos o marcas reales. El modo en línea va directo entre teléfonos, sin servidor ni cuenta.",
+ "share_txt": "SportNest — juegos de deporte y competición. {n} te invita a jugar:",
+ "copied": "Enlace copiado",
+ "s_streak": "Racha actual",
+ "s_best": "Mejor racha",
+ "s_dailies": "Retos",
+ "s_done": "Niveles",
+ "s_stars": "Estrellas",
+ "s_three": "3 estrellas",
+ "s_wins": "Victorias",
+ "s_games": "Partidas",
+ "album_d": "Reúne pegatinas por tus logros. Toca una pegatina para ver cómo conseguirla.",
+ "st_stars10": "10 estrellas",
+ "std_stars10": "Reúne 10 estrellas",
+ "st_stars50": "50 estrellas",
+ "std_stars50": "Reúne 50 estrellas",
+ "st_stars150": "150 estrellas",
+ "std_stars150": "Reúne 150 estrellas",
+ "st_three": "Tres estrellas",
+ "std_three": "Supera un nivel con 3 estrellas",
+ "st_cpu": "Móvil vencido",
+ "std_cpu": "Vence al móvil en un duelo",
+ "st_two": "Dos en un móvil",
+ "std_two": "Juega dos en un teléfono",
+ "st_online": "En línea",
+ "std_online": "Juega en línea con un amigo",
+ "st_daily1": "Primer reto",
+ "std_daily1": "Completa un reto diario",
+ "st_streak3": "Racha 3",
+ "std_streak3": "Reto diario 3 días seguidos",
+ "st_streak7": "Racha semanal",
+ "std_streak7": "Reto diario 7 días seguidos",
+ "g4t": "Reto diario y pegatinas",
+ "g4": "Cada día un reto nuevo. Las rachas y logros dan pegatinas en tu álbum.",
+ "g5t": "Con un amigo",
+ "g5": "Dos en un teléfono, o en línea con voz y sin servidor. Todo funciona sin internet, salvo el modo en línea.",
+ "letsplay": "A jugar",
+ "s_level": "Nivel",
+ "bot": "Ordenador",
+ "opp": "Rival",
+},
+ar: {
+ "dir": "rtl",
+ "name": "اسمي",
+ "app_sub": "ألعاب رياضة ومنافسة",
+ "tagline": "وحدك أو ضد الجهاز أو لاعبان أو أونلاين",
+ "m_solo": "المراحل",
+ "m_solo_d": "من السهل إلى الصعب مع النجوم",
+ "m_cpu": "ضد الجهاز",
+ "m_cpu_d": "أربعة مستويات صعوبة",
+ "m_two": "لاعبان على هاتف واحد",
+ "m_two_d": "الهاتف مستلقٍ ولكل لاعب جانب",
+ "m_online": "أونلاين",
+ "m_online_d": "مع صديق وبالصوت",
+ "back": "رجوع",
+ "home": "الرئيسية",
+ "settings": "الإعدادات",
+ "lang": "اللغة",
+ "theme": "المظهر",
+ "sound": "الأصوات",
+ "vib": "الاهتزاز",
+ "on": "مفعّل",
+ "off": "متوقف",
+ "reset_all": "مسح كل التقدم",
+ "reset_ask": "هل تريد مسح كل المراحل والنجوم؟",
+ "yes": "نعم",
+ "no": "لا",
+ "cancel": "إلغاء",
+ "ok": "موافق",
+ "close": "إغلاق",
+ "pause": "إيقاف مؤقت",
+ "resume": "متابعة",
+ "restart": "إعادة",
+ "quit": "خروج",
+ "next_level": "المرحلة التالية",
+ "retry": "مرة أخرى",
+ "rematch": "إعادة المباراة",
+ "level": "المرحلة {n}",
+ "world": "العالم {n}",
+ "locked": "مغلق",
+ "stars": "النجوم",
+ "win": "فزت!",
+ "lose": "ليس هذه المرة",
+ "draw": "تعادل",
+ "done": "اكتملت المرحلة!",
+ "failed": "فشلت المرحلة",
+ "time_up": "انتهى الوقت",
+ "lv_easy": "سهل",
+ "lv_normal": "متوسط",
+ "lv_hard": "صعب",
+ "lv_expert": "خبير",
+ "lv_easy_d": "للبداية",
+ "lv_normal_d": "أقوى من السهل غالباً",
+ "lv_hard_d": "أقوى من المتوسط غالباً",
+ "lv_expert_d": "يقرأ عاداتك ويلعب بحدة",
+ "choose_diff": "اختر المستوى",
+ "you": "أنا",
+ "cpu": "الجهاز",
+ "p1": "اللاعب 1",
+ "p2": "اللاعب 2",
+ "p_wins": "فاز {n}!",
+ "go": "هيا!",
+ "ready": "جاهزون؟",
+ "on_host": "فتح غرفة",
+ "on_join": "الانضمام برمز",
+ "on_code": "رمز الغرفة",
+ "on_enter": "اكتب الرمز",
+ "on_invite": "دعوة عبر واتساب",
+ "on_copy": "نسخ الرابط",
+ "on_copied": "تم نسخ الرابط",
+ "on_connecting": "جارٍ الاتصال…",
+ "on_waiting": "بانتظار صديق…",
+ "on_open": "متصلان",
+ "on_reconn": "إعادة الاتصال…",
+ "on_notfound": "الغرفة غير موجودة. تحقق من الرمز",
+ "on_full": "الغرفة ممتلئة",
+ "on_err": "لا اتصال. تحقق من الإنترنت",
+ "on_start": "بدء اللعبة",
+ "on_wait_host": "بانتظار أن يبدأ المضيف…",
+ "on_leave": "مغادرة الغرفة",
+ "on_ver": "لدى صديقك إصدار آخر. حدّثا معاً",
+ "on_left": "انقطع اتصال صديقك",
+ "on_opp_over": "خسر صديقك",
+ "on_you_over": "خسرت",
+ "seat_host": "المضيف",
+ "seat_guest": "ضيف",
+ "seat_empty": "شاغر",
+ "seat_off": "غير متصل",
+ "v_ptt": "اضغط وتحدث",
+ "v_open": "ميكروفون مفتوح",
+ "v_msg": "رسالة صوتية",
+ "v_denied": "لا إذن للميكروفون",
+ "v_tap": "المس للاستماع",
+ "v_talking": "{n} يتحدث…",
+ "v_privacy": "الصوت ينتقل مباشرة بين الهاتفين ولا يُحفظ",
+ "exit_again": "اضغط رجوع مرة أخرى للخروج",
+ "g1t": "أهلاً بك",
+ "g1": "مجموعة ألعاب رياضية: ركلات جزاء وغيرها. كل لعبة وحدك أو ضد الجهاز أو لاعبان أو أونلاين.",
+ "g2t": "مراحل ونجوم",
+ "g2": "كل لعبة تبدأ سهلة وتصعب تدريجياً. اجمع النجوم لفتح مراحل جديدة.",
+ "g3t": "أصابع كبيرة",
+ "g3": "اسحب للتصويب، واضغط مطولاً لشحن القوة، وأفلت للتسديد. قوة أكبر تعني سرعة أكبر لكن دقة أقل.",
+ "skip": "تخطي",
+ "next": "التالي",
+ "start": "ابدأ",
+ "about": "حول",
+ "about_t": "ألعاب رياضية مستوحاة من ألعاب كلاسيكية. الأسماء والشخصيات والرسوم من تصميمنا ولا ترتبط بلاعبين أو فرق أو علامات حقيقية.",
+ "privacy": "سياسة الخصوصية",
+ "cont": "متابعة",
+ "daily": "التحدي اليومي",
+ "daily_done": "تم اليوم ✓",
+ "streak_n": "سلسلة {n} أيام",
+ "rules": "القواعد",
+ "album": "الألبوم",
+ "stats": "الإنجازات",
+ "me": "لاعبي",
+ "pick_av": "اختر حيواناً",
+ "look": "المظهر",
+ "th_gold": "ذهبي",
+ "th_silver": "فضي",
+ "th_emerald": "زمردي",
+ "th_ruby": "ياقوتي",
+ "th_ocean": "محيطي",
+ "daymode": "نهار / ليل",
+ "night": "ليل",
+ "day": "نهار",
+ "gameplay": "اللعب",
+ "backup": "نسخ احتياطي واستعادة",
+ "backup_d": "كل شيء يبقى على هذا الهاتف فقط. ملف النسخة يحفظ الإعدادات والمراحل والنجوم والملصقات.",
+ "export": "تصدير",
+ "import": "استعادة",
+ "exported": "تم حفظ النسخة",
+ "bad_file": "الملف غير مناسب",
+ "import_q": "استعادة نسخة {n} بتاريخ {d}؟ سيستبدل التقدم الحالي.",
+ "guide": "الدليل",
+ "reset_all2": "حذف كل شيء",
+ "reset_q1": "حذف كل التقدم والإعدادات والملصقات؟",
+ "reset_q2": "هل أنت متأكد؟ لا يمكن التراجع.",
+ "reset_yes": "نعم، احذف كل شيء",
+ "a_ver": "الإصدار",
+ "a_dev": "التطوير",
+ "a_plat": "المنصة",
+ "a_store": "التخزين",
+ "a_local": "على الجهاز فقط",
+ "a_levels": "المراحل",
+ "a_lic": "الترخيص",
+ "a_storeLink": "متجر AppNest",
+ "a_share": "شارك التطبيق",
+ "a_feedback": "أرسل ملاحظاتك",
+ "a_privacy": "سياسة الخصوصية",
+ "install": "إضافة إلى الشاشة",
+ "a_disc": "ألعاب رياضية مستوحاة من ألعاب كلاسيكية. الأسماء والشخصيات والرسومات أصلية ولا ترتبط بلاعبين أو فرق أو علامات حقيقية. اللعب أونلاين مباشر بين الهواتف بلا خادم وبلا حساب.",
+ "share_txt": "SportNest — ألعاب رياضة ومنافسة. {n} يدعوك للعب:",
+ "copied": "تم نسخ الرابط",
+ "s_streak": "السلسلة الحالية",
+ "s_best": "أفضل سلسلة",
+ "s_dailies": "التحديات",
+ "s_done": "المراحل",
+ "s_stars": "النجوم",
+ "s_three": "3 نجوم",
+ "s_wins": "الفوز",
+ "s_games": "المباريات",
+ "album_d": "اجمع ملصقات مقابل الإنجازات. انقر على ملصق لمعرفة كيف تحصل عليه.",
+ "st_stars10": "10 نجوم",
+ "std_stars10": "اجمع 10 نجوم",
+ "st_stars50": "50 نجمة",
+ "std_stars50": "اجمع 50 نجمة",
+ "st_stars150": "150 نجمة",
+ "std_stars150": "اجمع 150 نجمة",
+ "st_three": "ثلاث نجوم",
+ "std_three": "أنهِ مرحلة بثلاث نجوم",
+ "st_cpu": "هزمت الحاسوب",
+ "std_cpu": "اهزم الحاسوب في مبارزة",
+ "st_two": "اثنان على هاتف",
+ "std_two": "العب اثنان على هاتف واحد",
+ "st_online": "أونلاين",
+ "std_online": "العب أونلاين مع صديق",
+ "st_daily1": "أول تحدٍّ",
+ "std_daily1": "أكمل تحدياً يومياً",
+ "st_streak3": "سلسلة 3",
+ "std_streak3": "تحدٍّ يومي 3 أيام متتالية",
+ "st_streak7": "سلسلة أسبوع",
+ "std_streak7": "تحدٍّ يومي 7 أيام متتالية",
+ "g4t": "تحدٍّ يومي وملصقات",
+ "g4": "تحدٍّ جديد كل يوم. السلاسل والإنجازات تمنحك ملصقات في الألبوم.",
+ "g5t": "مع صديق",
+ "g5": "اثنان على هاتف واحد، أو أونلاين بالصوت وبلا خادم. كل شيء يعمل بلا إنترنت عدا اللعب أونلاين.",
+ "letsplay": "هيا نلعب",
+ "s_level": "مرحلة",
+ "bot": "الحاسوب",
+ "opp": "الخصم",
+},
+};
+
+/* ===== src/i18n_pen.js ===== */
+/* SportNest — Penalty strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_pen: 'פנדלים', d_pen: 'גוררים, טוענים כוח ובועטים',
+      pen_aim: 'גררו לכוון, החזיקו לטעינת כוח ושחררו לבעוט', pen_keep: 'גררו את הכפפות למקום שבו תרצו לצלול. הבועט יבעט כל רגע', pen_keep_wait: 'מקמו את הכפפות. החבר בועט בקרוב', pen_two_help: 'הבועט גורר ומשחרר בצד שלו. השוער גורר כפפות בצד שלו',
+      pen_wait_keeper: 'ממתין לשוער…', pen_goal: 'שער!', pen_saved: 'נבלם!', pen_wide: 'הצידה', pen_over: 'מעל המשקוף', pen_post: 'קורה!', pen_blocked: 'נחסם!', pen_need: 'צריך {n} שערים', pen_kick: 'בעיטה', pen_wind: 'רוח', pen_sd: 'הכרעה',
+      ru_pen: '<p>בועטים פנדלים לשער. גוררים אצבע כדי לכוון, מחזיקים כדי לטעון כוח ומשחררים כדי לבעוט. כוח גבוה מהיר יותר ולכן קשה יותר לשוער, אבל פחות מדויק ועלול לעוף הצידה או מעל המשקוף. העיגול הצהוב סביב הכוונת הוא טווח הפיזור.</p><p>בשלבים צריך להבקיע מספר שערים מתוך מספר בעיטות. יש רוח (הדגל ליד השער), ובהמשך גם בובות שחוסמות חלק מהשער.</p><p>מול המחשב ובשניים: הכרעת פנדלים לסירוגין, חמש בעיטות לכל צד ואחר כך הכרעה פתאומית. כשאתם שוערים, גוררים את הכפפות למקום הצלילה לפני שהבועט בועט. המחשב לומד מאיפה בעטתם בבעיטות הקודמות.</p>' },
+    en: { g_pen: 'Penalties', d_pen: 'Drag, charge power, shoot',
+      pen_aim: 'Drag to aim, hold to charge power, release to shoot', pen_keep: 'Drag the gloves to where you want to dive. The kick is coming', pen_keep_wait: 'Place your gloves. Your friend kicks soon', pen_two_help: 'The kicker drags and releases on their side. The keeper drags the gloves on theirs',
+      pen_wait_keeper: 'Waiting for the keeper…', pen_goal: 'GOAL!', pen_saved: 'SAVED!', pen_wide: 'Wide', pen_over: 'Over the bar', pen_post: 'Off the frame!', pen_blocked: 'Blocked!', pen_need: 'Need {n} goals', pen_kick: 'Kick', pen_wind: 'Wind', pen_sd: 'Sudden death',
+      ru_pen: '<p>Take penalty kicks at the goal. Drag a finger to aim, hold to charge power, release to shoot. More power is faster, so harder for the keeper, but less accurate: it can fly wide or over the bar. The yellow circle around the crosshair shows the spread.</p><p>In levels you must score a number of goals out of a number of kicks. There is wind (the flag by the goal) and later training dummies that block part of the goal.</p><p>Vs computer and two players: alternating shootout, five kicks each and then sudden death. As keeper, drag the gloves to where you want to dive before the kicker shoots. The computer learns from where you kicked earlier.</p>' },
+    ru: { g_pen: 'Пенальти', d_pen: 'Тяните, копите силу, бейте',
+      pen_aim: 'Тяните, чтобы прицелиться, удерживайте для силы, отпустите для удара', pen_keep: 'Перетащите перчатки туда, куда хотите прыгнуть. Удар вот-вот', pen_keep_wait: 'Поставьте перчатки. Друг скоро бьёт', pen_two_help: 'Бьющий тянет и отпускает на своей стороне. Вратарь тянет перчатки на своей',
+      pen_wait_keeper: 'Ждём вратаря…', pen_goal: 'ГОЛ!', pen_saved: 'Отбил!', pen_wide: 'Мимо', pen_over: 'Выше ворот', pen_post: 'Штанга!', pen_blocked: 'Заблокировано!', pen_need: 'Нужно голов: {n}', pen_kick: 'Удар', pen_wind: 'Ветер', pen_sd: 'До победы',
+      ru_pen: '<p>Бейте пенальти в ворота. Тяните палец, чтобы прицелиться, удерживайте для силы, отпустите для удара. Чем больше сила, тем быстрее мяч и тем труднее вратарю, но точность ниже: мяч может уйти мимо или выше ворот. Жёлтый круг вокруг прицела показывает разброс.</p><p>В уровнях нужно забить определённое число голов из определённого числа ударов. Есть ветер (флаг у ворот), а позже и манекены, закрывающие часть ворот.</p><p>Против компьютера и вдвоём: серия по очереди, по пять ударов, затем до победы. Когда вы вратарь, перетащите перчатки туда, куда хотите прыгнуть, до удара. Компьютер учится по вашим прошлым ударам.</p>' },
+    es: { g_pen: 'Penaltis', d_pen: 'Arrastra, carga fuerza y chuta',
+      pen_aim: 'Arrastra para apuntar, mantén para cargar fuerza y suelta para chutar', pen_keep: 'Arrastra los guantes adonde quieras lanzarte. El chut está al caer', pen_keep_wait: 'Coloca los guantes. Tu amigo chuta enseguida', pen_two_help: 'El que chuta arrastra y suelta en su lado. El portero arrastra los guantes en el suyo',
+      pen_wait_keeper: 'Esperando al portero…', pen_goal: '¡GOL!', pen_saved: '¡Parada!', pen_wide: 'Fuera', pen_over: 'Por encima', pen_post: '¡Al palo!', pen_blocked: '¡Bloqueado!', pen_need: 'Faltan {n} goles', pen_kick: 'Chut', pen_wind: 'Viento', pen_sd: 'Muerte súbita',
+      ru_pen: '<p>Tira penaltis a la portería. Arrastra el dedo para apuntar, mantén para cargar fuerza y suelta para chutar. Más fuerza es más rápido y más difícil para el portero, pero menos preciso: puede salir fuera o por encima del larguero. El círculo amarillo alrededor de la mira muestra la dispersión.</p><p>En los niveles hay que marcar un número de goles de un número de chuts. Hay viento (la bandera junto a la portería) y más adelante muñecos que tapan parte de la portería.</p><p>Contra el ordenador y de a dos: tanda alternada, cinco chuts cada uno y luego muerte súbita. De portero, arrastra los guantes adonde quieras lanzarte antes del chut. El ordenador aprende de dónde chutaste antes.</p>' },
+    ar: { g_pen: 'ركلات الجزاء', d_pen: 'اسحب واشحن القوة وسدّد',
+      pen_aim: 'اسحب للتصويب، اضغط مطولاً لشحن القوة، وأفلت للتسديد', pen_keep: 'اسحب القفازين إلى حيث تريد الارتماء. التسديدة قادمة', pen_keep_wait: 'ضع القفازين. صديقك سيسدد قريباً', pen_two_help: 'المسدّد يسحب ويفلت في جهته. الحارس يسحب القفازين في جهته',
+      pen_wait_keeper: 'بانتظار الحارس…', pen_goal: 'هدف!', pen_saved: 'تصدٍّ!', pen_wide: 'خارج المرمى', pen_over: 'فوق العارضة', pen_post: 'القائم!', pen_blocked: 'تم الصدّ!', pen_need: 'مطلوب {n} أهداف', pen_kick: 'ركلة', pen_wind: 'ريح', pen_sd: 'الموت المفاجئ',
+      ru_pen: '<p>سدّد ركلات جزاء نحو المرمى. اسحب إصبعك للتصويب، واضغط مطولاً لشحن القوة، وأفلت للتسديد. القوة الأكبر تعني كرة أسرع وأصعب على الحارس لكن بدقة أقل: قد تخرج بعيداً أو فوق العارضة. الدائرة الصفراء حول التصويب تُظهر مدى التشتت.</p><p>في المراحل عليك تسجيل عدد من الأهداف من عدد من الركلات. هناك ريح (العلم بجانب المرمى) وفي مراحل لاحقة دمى تسد جزءاً من المرمى.</p><p>ضد الحاسوب ولاعبين اثنين: ركلات متبادلة، خمس لكل جانب ثم الموت المفاجئ. وأنت حارس، اسحب القفازين إلى حيث تريد الارتماء قبل التسديد. الحاسوب يتعلم من أماكن تسديداتك السابقة.</p>' }
+  };
+  // Hebrew needs its own rules text (the template above reused the key name ru_ as a generic "rules" prefix)
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
+/* ===== src/app.js ===== */
+'use strict';
+/* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
+const APP_VERSION = '1.0.0';
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { toast('⚠ שמירה נכשלה'); return false; } }
+};
+const AVATARS = ['🦉', '🦔', '🦊', '🐧', '🐯', '🐨', '🐙', '🦜'];
+const THEMES = ['gold', 'silver', 'emerald', 'ruby', 'ocean'];
+const defLang = () => { const l = (navigator.language || 'he').slice(0, 2); return LANG[l] ? l : 'he'; };
+const S = Object.assign({ lang: store.get('sn_lang_default', null) || 'he', theme: 'gold', mode: 'night', sound: true, vib: true, name: '', av: AVATARS[0], guide: false }, store.get('sn_set', {}));
+if (THEMES.indexOf(S.theme) < 0) S.theme = 'gold'; if (!S.mode) S.mode = 'night';
+const saveS = () => store.set('sn_set', S);
+const P = store.get('sn_prog', {});            // התקדמות: P[game] = {lv:{n:stars}, games, wins}
+const saveP = () => store.set('sn_prog', P);
+const pg = g => P[g] || (P[g] = { lv: {}, games: 0, wins: 0 });
+function T(k, o) {
+  let s = (LANG[S.lang] && LANG[S.lang][k]) || LANG.en[k] || k;
+  if (o) for (const a in o) s = s.split('{' + a + '}').join(o[a]);
+  return s;
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function applyLang() { const d = LANG[S.lang].dir; document.documentElement.lang = S.lang; document.documentElement.dir = d; document.title = 'SportNest · ' + T('app_sub'); }
+function applyTheme() { document.documentElement.dataset.theme = S.theme; document.documentElement.dataset.mode = S.mode; const m = $('meta[name=theme-color]'); if (m) m.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#0b0b0d'; }
+const nameOr = () => S.name || T('you');
+
+/* ---------- צלילים (מסונתזים) ---------- */
+let AC = null;
+function tone(f, d, type, v, delay) {
+  if (!S.sound) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state === 'suspended') AC.resume();
+    const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime + (delay || 0);
+    o.type = type || 'sine'; o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v || 0.07, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + d + 0.02);
+  } catch (e) {}
+}
+const SFX = {
+  tap() { tone(520, 0.05, 'triangle', 0.05); },
+  move() { tone(300, 0.03, 'square', 0.02); },
+  rot() { tone(440, 0.05, 'triangle', 0.04); },
+  lock() { tone(150, 0.08, 'sine', 0.08); },
+  line(n) { for (let i = 0; i < Math.min(4, n + 1); i++) tone(520 + i * 160, 0.12, 'triangle', 0.07, i * 0.06); },
+  hit() { tone(110, 0.2, 'sawtooth', 0.06); },
+  win() { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.18, 'triangle', 0.08, i * 0.1)); },
+  lose() { [330, 262, 196].forEach((f, i) => tone(f, 0.22, 'sawtooth', 0.05, i * 0.14)); },
+  count() { tone(660, 0.1, 'square', 0.04); }, go() { tone(990, 0.22, 'square', 0.05); }
+};
+const vib = ms => { if (S.vib && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) {} };
+
+/* ---------- ציורים (אופציונלי: art/<שם>.webp; בלי הקובץ — האפליקציה מציירת בקוד) ---------- */
+const Art = { img: {}, get(n) { return this.img[n] || null; }, init() { let t = 0; (typeof ART_FILES !== 'undefined' ? ART_FILES : []).forEach(n => { const i = new Image(); i.onload = () => { Art.img[n] = i; clearTimeout(t); t = setTimeout(() => { if (curSc === 'home') render('home'); }, 120); }; i.src = 'art/' + n + '.webp'; }); } };
+const artImg = (n, st) => Art.get(n) ? `<img src="art/${n}.webp" alt="" style="max-width:100%;max-height:100%;object-fit:contain;${st || ''}">` : '';
+
+function setPlayBg(g) { const el = $('#play'); el.dataset.bg = g; el.style.backgroundImage = Art.get('bg-' + g) ? 'url(art/bg-' + g + '.webp)' : ''; }
+
+/* ---------- חלונות והודעות ---------- */
+const overlays = [];
+function openOv(html, cls) {
+  const o = document.createElement('div'); o.className = 'ov ' + (cls || ''); o.innerHTML = '<div class="box">' + html + '</div>';
+  document.body.appendChild(o); overlays.push(o); syncHistory(); return o;
+}
+function closeOv(o) { if (!o) o = overlays[overlays.length - 1]; const i = overlays.indexOf(o); if (i >= 0) overlays.splice(i, 1); if (o && o.parentNode) o.remove(); if (o && o.onclose) { const f = o.onclose; o.onclose = null; f(); } syncHistory(); }
+const topOverlay = () => overlays[overlays.length - 1];
+function confirmBox(text, yes, no) {
+  const o = openOv('<p style="color:var(--fg);font-size:18px">' + esc(text) + '</p><button class="btn pri" data-y>' + T('yes') + '</button><button class="btn" data-n>' + T('no') + '</button>');
+  $('[data-y]', o).onclick = () => { closeOv(o); yes && yes(); }; $('[data-n]', o).onclick = () => { closeOv(o); no && no(); };
+}
+let toastT = 0;
+function toast(msg, ms) { $$('.toast').forEach(x => x.remove()); const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg; document.body.appendChild(d); clearTimeout(toastT); toastT = setTimeout(() => d.remove(), ms || 2200); }
+
+/* ---------- ניווט וכפתור חזרה ---------- */
+let curSc = 'home', stack = [], exitArm = 0, hist = { guard: false, ignore: 0 };
+const Games = {};         // id → {ready, icon(), levels, start...}
+let curGame = null, activeRun = null;  // activeRun = אובייקט משחק רץ עם destroy()
+function show(id, push) {
+  if (push !== false && curSc !== id) stack.push(curSc);
+  $$('.sc').forEach(s => s.classList.toggle('on', s.id === id)); curSc = id;
+  if (id !== 'play' && activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+  const s = $('#' + id); if (s) s.scrollTop = 0;
+  syncHistory();
+}
+function goBack() {
+  if (curSc === 'play' && activeRun && activeRun.onBack) { activeRun.onBack(); return; }
+  const prev = stack.pop() || 'home'; show(prev, false); render(prev);
+}
+function syncHistory() {
+  const need = !exitArm;
+  if (need && !hist.guard) { history.pushState({ g: 1 }, ''); hist.guard = true; }
+  else if (!need && hist.guard) { hist.guard = false; hist.ignore++; history.back(); }
+}
+window.addEventListener('popstate', () => {
+  if (hist.ignore > 0) { hist.ignore--; return; } hist.guard = false;
+  if (topOverlay()) { const o = topOverlay(); if (o.dataset.nobk) { syncHistory(); return; } closeOv(o); }
+  else if (curSc === 'play' && activeRun && activeRun.onBack) activeRun.onBack();
+  else if (curSc !== 'home') goBack();
+  else { toast(T('exit_again'), 2000); exitArm = setTimeout(() => { exitArm = 0; syncHistory(); }, 2000); return; }
+  syncHistory();
+});
+function render(id) { const f = RENDER[id]; if (f) f(); }
+
+/* ---------- מסכים ---------- */
+const RENDER = {};
+RENDER.home = () => {
+  const el = $('#home');
+  el.innerHTML = `
+  <div class="top"><h1></h1><button class="ib" data-act="settings" aria-label="${T('settings')}">⚙️</button></div>
+  <div class="brand"><div class="logo">🪺</div><h2>SportNest</h2><p>${T('app_sub')}</p></div>
+  <div class="who"><span class="av">${S.av}</span><div style="flex:1"><b>${esc(nameOr())}</b><div class="hint" style="text-align:start">${T('tagline')}</div></div><button class="ib" data-act="theme" aria-label="${T('theme')}">🎨</button></div>
+  <div class="tiles">${Object.keys(Games).filter(g => Games[g].ready).map(g => `<div class="tile" data-g="${g}"><div class="art">${artImg('tile-' + g) || Games[g].art()}</div><b>${T('g_' + g)}</b><small>${T('d_' + g)}</small></div>`).join('')}</div>
+  <div class="foot">SportNest ${APP_VERSION} · AppNest 🪺</div>`;
+  $$('[data-g]', el).forEach(t => t.onclick = () => { SFX.tap(); openGame(t.dataset.g); });
+  $('[data-act=settings]', el).onclick = () => { show('settings'); render('settings'); };
+  $('[data-act=theme]', el).onclick = () => { S.theme = THEMES[(THEMES.indexOf(S.theme) + 1) % THEMES.length]; saveS(); applyTheme(); };
+};
+function openGame(g) { curGame = g; show('gmenu'); render('gmenu'); }
+function backName() { const p = stack[stack.length - 1] || 'home'; return { home: T('home'), gmenu: curGame ? T('g_' + curGame) : T('home'), map: T('m_solo'), lobby: T('m_online'), settings: T('settings'), about: T('about'), rules: T('rules'), stats: T('stats'), album: T('album') }[p] || T('back'); }
+function backBar(title) { return `<div class="top"><button class="back" data-back>${LANG[S.lang].dir === 'rtl' ? '→' : '←'} ${esc(backName())}</button><h1>${title || ''}</h1></div>`; }
+function wireBack(el) { const b = $('[data-back]', el); if (b) b.onclick = () => { SFX.tap(); goBack(); }; }
+RENDER.gmenu = () => {
+  const g = Games[curGame], el = $('#gmenu'), st = pg(curGame);
+  const total = Object.values(st.lv).reduce((a, b) => a + b, 0);
+  const modes = [['solo', '⭐', 'pri'], ['cpu', '🤖', ''], ['two', '👥', ''], ['online', '🌐', '']].filter(m => g.modes.includes(m[0]));
+  el.innerHTML = backBar(T('g_' + curGame)) + `<div class="brand"><div class="art" style="height:90px;display:grid;place-items:center">${artImg('tile-' + curGame) || g.art()}</div><p>${T('d_' + curGame)}${total ? ' · ⭐ ' + total : ''}</p></div>
+  <div class="modes">${modes.map(m => `<button class="btn ${m[2]}" data-m="${m[0]}"><span class="ic">${m[1]}</span><span>${T('m_' + m[0])}<small>${T('m_' + m[0] + '_d')}</small></span></button>`).join('')}</div>`;
+  wireBack(el);
+  $$('[data-m]', el).forEach(b => b.onclick = () => { SFX.tap(); const m = b.dataset.m; if (m === 'solo') { show('map'); render('map'); } else if (m === 'cpu') chooseDiff(lv => g.startCpu(lv)); else if (m === 'two') g.startTwo(); else Net.openLobby(); });
+};
+function chooseDiff(cb) {
+  const o = openOv(`<h3>${T('choose_diff')}</h3>` + [1, 2, 3, 4].map(i => `<button class="btn ${i === 2 ? 'pri' : ''}" data-d="${i}" style="flex-direction:column;gap:2px"><span>${['', '🟢', '🟡', '🟠', '🔴'][i]} ${T('lv_' + ['', 'easy', 'normal', 'hard', 'expert'][i])}</span><small style="font-weight:500;opacity:.75">${T('lv_' + ['', 'easy', 'normal', 'hard', 'expert'][i] + '_d')}</small></button>`).join('') + `<button class="btn sm" data-x>${T('cancel')}</button>`);
+  $$('[data-d]', o).forEach(b => b.onclick = () => { closeOv(o); cb(+b.dataset.d); }); $('[data-x]', o).onclick = () => closeOv(o);
+}
+RENDER.map = () => {
+  const g = Games[curGame], el = $('#map'), st = pg(curGame), n = g.levels.length, per = 8;
+  let h = backBar(T('g_' + curGame) + ' · ' + T('m_solo'));
+  for (let w = 0; w * per < n; w++) {
+    h += `<div class="wh">${T('world', { n: w + 1 })}</div><div class="map">`;
+    for (let i = w * per + 1; i <= Math.min(n, (w + 1) * per); i++) {
+      const s = st.lv[i] || 0, open = i === 1 || (st.lv[i - 1] || 0) >= 1, cur = open && !s;
+      h += `<button class="lv ${open ? '' : 'lock'} ${cur ? 'cur' : ''}" data-l="${i}"><span>${open ? i : '🔒'}</span><span class="st">${open ? '★'.repeat(s) + '☆'.repeat(3 - s) : ''}</span></button>`;
+    }
+    h += '</div>';
+  }
+  el.innerHTML = h; wireBack(el);
+  $$('[data-l]', el).forEach(b => b.onclick = () => { SFX.tap(); g.startSolo(+b.dataset.l); });
+  const c = $('.lv.cur', el); if (c) setTimeout(() => c.scrollIntoView({ block: 'center' }), 30);
+};
+RENDER.settings = () => {
+  const el = $('#settings');
+  el.innerHTML = backBar(T('settings')) + `
+  <div class="lbl">${T('name')}</div><input class="txt" id="sName" maxlength="14" value="${esc(S.name)}" placeholder="${T('you')}">
+  <div class="lbl">🐾</div><div class="seg" id="sAv">${AVATARS.map(a => `<button data-a="${a}" class="${S.av === a ? 'on' : ''}">${a}</button>`).join('')}</div>
+  <div class="lbl">${T('lang')}</div><div class="seg" id="sLang">${Object.keys(LANG).map(l => `<button data-l="${l}" class="${S.lang === l ? 'on' : ''}">${LANG[l].name}</button>`).join('')}</div>
+  <div class="lbl">${T('theme')}</div><div class="seg" id="sTh">${THEMES.map(t => `<button data-t="${t}" class="${S.theme === t ? 'on' : ''}">${{ black: '⚫', night: '🔵', forest: '🟢', sunset: '🟠', light: '⚪' }[t]}</button>`).join('')}</div>
+  <div class="lbl">${T('sound')} / ${T('vib')}</div><div class="seg"><button id="sSnd" class="${S.sound ? 'on' : ''}">🔊 ${S.sound ? T('on') : T('off')}</button><button id="sVib" class="${S.vib ? 'on' : ''}">📳 ${S.vib ? T('on') : T('off')}</button></div>
+  <div class="lbl">${T('about')}</div><div class="card hint" style="text-align:start">${T('about_t')}<br>SportNest ${APP_VERSION} · AppNest<br><a href="privacy_policy.html" style="color:var(--acc)">${T('privacy')}</a></div>
+  <button class="btn" id="sReset" style="margin-top:16px;color:var(--bad)">${T('reset_all')}</button>`;
+  wireBack(el);
+  $('#sName', el).oninput = e => { S.name = e.target.value.slice(0, 14); saveS(); };
+  $$('#sAv button', el).forEach(b => b.onclick = () => { S.av = b.dataset.a; saveS(); render('settings'); });
+  $$('#sLang button', el).forEach(b => b.onclick = () => { S.lang = b.dataset.l; saveS(); applyLang(); render('settings'); });
+  $$('#sTh button', el).forEach(b => b.onclick = () => { S.theme = b.dataset.t; saveS(); applyTheme(); render('settings'); });
+  $('#sSnd', el).onclick = () => { S.sound = !S.sound; saveS(); render('settings'); };
+  $('#sVib', el).onclick = () => { S.vib = !S.vib; saveS(); render('settings'); };
+  $('#sReset', el).onclick = () => confirmBox(T('reset_ask'), () => { for (const k in P) delete P[k]; saveP(); toast('✓'); });
+};
+
+/* ---------- מדריך פתיחה ---------- */
+let guideEl = null;
+function showGuide() {
+  let i = 0; const steps = [['🪺', 'g1t', 'g1'], ['👆', 'g2t', 'g2'], ['👥', 'g3t', 'g3']];
+  const draw = () => {
+    const s = steps[i]; guideEl.innerHTML = `<div class="box"><div style="font-size:60px">${s[0]}</div><h3>${T(s[1])}</h3><p>${T(s[2])}</p><button class="btn pri" data-n>${i === steps.length - 1 ? T('start') : T('next')}</button><button class="btn sm" data-s>${T('skip')}</button></div>`;
+    $('[data-n]', guideEl).onclick = () => { if (++i >= steps.length) endGuide(); else draw(); }; $('[data-s]', guideEl).onclick = endGuide;
+  };
+  guideEl = document.createElement('div'); guideEl.className = 'ov'; guideEl.dataset.nobk = 1; document.body.appendChild(guideEl); overlays.push(guideEl); draw();
+}
+function endGuide() { S.guide = true; saveS(); const g = guideEl; guideEl = null; closeOv(g); }
+
+/* ---------- אונליין: NestLink ---------- */
+const Net = {
+  link: null, handler: null, status: 'off', code: '', roster: [], talkingSeat: -1, joinCode: null, gameStart: null,
+  ensure() {
+    if (this.link) return this.link;
+    const self = this;
+    this.link = NestLink.create({
+      app: 'sportnest', version: APP_VERSION, maxPlayers: 2,
+      name: () => S.name || ((self.link && self.link.session && self.link.session.role === 'host') ? T('p1') : (self.link && self.link.session && self.link.session.role ? T('p2') : T('you'))),
+      persist: sess => store.set('sn_net', sess),
+      onStatus: (st, err) => { self.status = st; if (['notfound', 'full', 'error'].includes(st)) { self.lastFail = st; setTimeout(() => { if (self.status === st) { self.leave(); self.renderLobby(); } }, 0); } else if (st === 'open') self.lastFail = null; if (self.handler && self.handler.onNetStatus) self.handler.onNetStatus(st, err); self.renderLobby(); },
+      onRoster: r => { self.roster = r; if (self.handler && self.handler.onRoster) self.handler.onRoster(r); self.renderLobby(); },
+      onMessage: (m, from) => self.onMessage(m, from),
+      onEmoji: (e, from) => { if (self.handler && self.handler.onEmoji) self.handler.onEmoji(e, from); else toast(e, 1200); },
+      onTalk: (seat, on) => { self.talkingSeat = on ? seat : -1; $$('.talking').forEach(x => { const p = self.roster.find(r => r.seat === seat); x.textContent = on && p ? '🎙 ' + T('v_talking', { n: p.name || '…' }) : ''; }); },
+      onVoiceMsg: (url, sec, seat, mine) => { if (!mine) { try { const a = new Audio(url); a.play().catch(() => toast('🔈 ' + T('v_tap'), 4000)); } catch (e) {} } },
+      onMicError: () => toast(T('v_denied')),
+      onVersion: () => toast(T('on_ver'), 4000),
+      onCode: c => { self.code = c; self.renderLobby(); }
+    });
+    return this.link;
+  },
+  onMessage(m, from) {
+    if (m.type === 'start') { this.gameStart = m; const g = Games[m.game]; if (g && g.startOnline) { curGame = m.game; g.startOnline(m); } return; }
+    if (this.handler && this.handler.onMessage) this.handler.onMessage(m, from);
+  },
+  openLobby() { show('lobby'); render('lobby'); },
+  host() { const L = this.ensure(); this.handler = null; L.host(); this.code = L.session ? L.session.code : ''; this.renderLobby(); },
+  join(code) { const L = this.ensure(); this.handler = null; L.join(code); this.renderLobby(); },
+  leave() { if (this.link) { this.link.close(); this.link = null; } store.set('sn_net', null); this.status = 'off'; this.roster = []; this.handler = null; },
+  invite() { const L = this.link; return L ? L.inviteURL() : ''; },
+  voiceBar() {
+    return `<div class="voice"><button data-ptt>🎙 ${T('v_ptt')}</button><button data-open>🔓 ${T('v_open')}</button><button data-rec>⏺ ${T('v_msg')}</button></div><div class="talking hint"></div>`;
+  },
+  wireVoice(el) {
+    const L = this.link; if (!L) return;
+    const ptt = $('[data-ptt]', el), open = $('[data-open]', el), rec = $('[data-rec]', el);
+    if (ptt) {
+      const dn = e => { e.preventDefault(); ptt.classList.add('dn'); L.talk(true); }, up = () => { ptt.classList.remove('dn'); L.talk(false); };
+      ptt.addEventListener('pointerdown', dn); ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => ptt.addEventListener(ev, up)); ptt.oncontextmenu = e => e.preventDefault();
+    }
+    if (open) open.onclick = async () => { const on = !L.openMic; const ok = await L.setOpenMic(on); open.classList.toggle('dn', on && ok); };
+    if (rec) {
+      const dn = e => { e.preventDefault(); rec.classList.add('dn'); L.recStart(20); }, up = () => { rec.classList.remove('dn'); L.recStop(); };
+      rec.addEventListener('pointerdown', dn); ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => rec.addEventListener(ev, up)); rec.oncontextmenu = e => e.preventDefault();
+    }
+  },
+  renderLobby() { if (curSc === 'lobby') render('lobby'); }
+};
+RENDER.lobby = () => {
+  const el = $('#lobby'), L = Net.link, st = Net.status, sess = L && L.session, isHost = sess && sess.role === 'host';
+  const active = sess && st !== 'off';
+  let h = backBar(T('m_online') + ' · ' + T('g_' + curGame));
+  if (!active) {
+    h += `<div class="wrap-lobby"><button class="btn pri" id="nHost">🏠 ${T('on_host')}</button>
+      <div class="card"><div class="lbl" style="margin-top:0">${T('on_join')}</div><div class="row"><input class="txt" id="nCode" maxlength="5" autocapitalize="characters" placeholder="${T('on_enter')}" style="text-transform:uppercase;letter-spacing:6px;text-align:center;direction:ltr"><button class="btn" id="nJoin">➜</button></div></div>
+      ${['notfound', 'full', 'error'].includes(Net.lastFail) ? `<div class="card" style="color:var(--bad)">${T('on_' + (Net.lastFail === 'error' ? 'err' : Net.lastFail))}</div>` : ''}</div>`;
+  } else {
+    const seats = (Net.roster.length ? Net.roster : [{ seat: 0, name: '', online: true }]);
+    const stText = { connecting: T('on_connecting'), waiting: T('on_waiting'), open: T('on_open'), reconnecting: T('on_reconn') }[st] || '';
+    h += `<div class="wrap-lobby">
+      ${isHost ? `<div class="card"><div class="lbl" style="margin-top:0">${T('on_code')}</div><div class="code">${esc(sess.code)}</div>
+        <div class="row" style="margin-top:10px"><button class="btn sm" id="nWa" style="flex:1">💬 ${T('on_invite')}</button><button class="btn sm" id="nCp" style="flex:1">🔗 ${T('on_copy')}</button></div></div>` : `<div class="card"><div class="lbl" style="margin-top:0">${T('on_code')}</div><div class="code">${esc(sess.code)}</div></div>`}
+      <div class="seats">${seats.map(p => `<div class="card"><span class="dot ${p.online ? 'on' : ''}"></span><b>${esc(p.name || (p.seat === 0 ? T('seat_host') : T('seat_guest')))}</b><span class="pill">${p.seat === 0 ? T('seat_host') : T('seat_guest')}</span>${p.voice ? ' 🎙' : ''}</div>`).join('')}${seats.length < 2 ? `<div class="card" style="opacity:.6"><span class="dot"></span>${T('seat_empty')}</div>` : ''}</div>
+      <div class="hint">${stText}</div>
+      ${isHost ? `<button class="btn pri" id="nStart" ${st === 'open' && Net.roster.filter(p => p.online).length >= 2 ? '' : 'disabled'}>▶ ${T('on_start')}</button>` : `<div class="hint">${T('on_wait_host')}</div>`}
+      ${Net.voiceBar()}<div class="hint">${T('v_privacy')}</div>
+      <button class="btn sm" id="nLeave">${T('on_leave')}</button></div>`;
+  }
+  el.innerHTML = h; wireBack(el);
+  const bk = $('[data-back]', el); if (bk) bk.onclick = () => { if (active) Net.leave(); goBack(); };
+  const hb = $('#nHost', el); if (hb) hb.onclick = () => { Net.lastFail = null; Net.host(); };
+  const jb = $('#nJoin', el); if (jb) jb.onclick = () => { const c = $('#nCode', el).value.trim(); if (c.length >= 4) { Net.lastFail = null; Net.join(c); } };
+  const wa = $('#nWa', el); if (wa) wa.onclick = () => window.open('https://wa.me/?text=' + encodeURIComponent('SportNest · ' + T('g_' + curGame) + '\n' + Net.invite()), '_blank');
+  const cp = $('#nCp', el); if (cp) cp.onclick = () => { try { navigator.clipboard.writeText(Net.invite()); toast(T('on_copied')); } catch (e) { toast(Net.invite(), 5000); } };
+  const sb = $('#nStart', el); if (sb) sb.onclick = () => { const g = Games[curGame]; const msg = g.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); };
+  const lb = $('#nLeave', el); if (lb) lb.onclick = () => { Net.leave(); render('lobby'); };
+  Net.wireVoice(el);
+};
+/* ---------- אתחול ---------- */
+function boot() {
+  applyLang(); applyTheme(); Art.init();
+  $$('.sc').forEach(s => s.classList.remove('on'));
+  render('home'); show('home', false); stack = [];
+  const q = new URLSearchParams(location.search);
+  if (q.get('join')) { curGame = q.get('game') || Object.keys(Games).find(g => Games[g].ready); show('lobby'); render('lobby'); setTimeout(() => Net.join(q.get('join')), 50); }
+  if (!S.guide && !q.get('noguide')) showGuide();
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+window.addEventListener('DOMContentLoaded', () => setTimeout(boot, 0));
+// נקודת בדיקה (לא משנה התנהגות)
+window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get stack() { return stack; }, S, P, Net, Games, get overlays() { return overlays.length; } };
+
+/* ===== src/pen_ui.js ===== */
+'use strict';
+/* פנדלים — שלבים, מול המחשב (הכרעה), שניים בטלפון, אונליין. המנוע: Pen.
+   כל החלטת משחק (תוצאה, ניקוד, תור) נגזרת ממנוע דטרמיניסטי + זרע, כך ששני הטלפונים מגיעים לאותה תוצאה. */
+(function () {
+  const E = Pen, LV = E.makeLevels();
+  const VW = 10, VH = 14, SX = x => 5 + 4 * x, SY = y => 4.4 - 4 * y, GXu = px => (px - 5) / 4, GYu = py => (4.4 - py) / 4;
+  const TEAM = ['#4f8be8', '#e8584f'], RES_KEY = { goal: 'pen_goal', saved: 'pen_saved', wide: 'pen_wide', over: 'pen_over', post: 'pen_post', blocked: 'pen_blocked' };
+  const tri = t => { t = t - Math.floor(t); return t < 0.5 ? t * 2 : 2 - t * 2; };
+  let CROWD = null;
+  function crowd() { if (CROWD) return CROWD; const R = E.prng(77), cols = ['#e8584f', '#f0c24b', '#4f8be8', '#59c46a', '#f4efe3', '#b06ad6']; CROWD = []; for (let i = 0; i < 190; i++) CROWD.push({ x: R() * VW, y: 0.1 + R() * 1.35, c: cols[(R() * cols.length) | 0], r: 0.09 + R() * 0.08 }); return CROWD; }
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botLvl = cfg.mode === 'cpu' ? cfg.lv : 0;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0;
+      this.i = 0; this.sc = { g: [0, 0], k: [0, 0] }; this.log = [[], []]; this.shotH = [[], []]; this.diveH = [[], []];
+      this.Rb = E.prng(this.seed * 5 + 1); this.state = this.net ? 'count' : 'prep'; this.cd = 3.2; this.lastCd = 4; this.resT = 0; this.t = 0;
+      this.wind = this.lv ? this.lv.wind : 0; this.defs = this.lv ? this.lv.defenders : []; this.queued = null; this.shots = 0;
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+      if (this.state === 'prep') this.beginKick();
+    }
+    /* ---------- roles ---------- */
+    viewOf(side) { return this.views.find(v => v.side === side) || this.views[0]; }
+    shooterSide() { return this.mode === 'solo' ? 0 : E.shooterOf(this.i); }
+    humanSides() { return this.mode === 'two' ? [0, 1] : this.net ? [this.me] : [0]; }
+    roleOf(v) { const s = this.shooterSide(); if (this.mode === 'solo') return 'shooter'; if (this.mode === 'two') return v.side === s ? 'shooter' : 'keeper'; const me = this.net ? this.me : 0; return me === s ? 'shooter' : 'keeper'; }
+    botShoots() { return this.mode === 'cpu' && this.shooterSide() === 1; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views ${two ? 'duo' : 'one'}">${two ? '<div class="pv top"><canvas></canvas></div>' : ''}<div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center"></div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el);
+      this.views = $$('.pv', el).map((box, k, all) => { const side = two ? (box.classList.contains('top') ? 1 : 0) : 0; return { box, cv: $('canvas', box), side, rot: two && side === 1, aim: null, charging: false, t0: 0, mark: { kx: 0, ky: E.KY0 }, cs: 10, ctx: null }; });
+      this.views.forEach(v => this.bindInput(v));
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      this.views.forEach(v => {
+        const r = v.box.getBoundingClientRect(); v.cs = Math.max(8, Math.min((r.width - 2) / VW, (r.height - 2) / VH)); v.vh = Math.max(VH, Math.min(17.5, (r.height - 2) / v.cs)); v.sp = v.vh - 1.8; const d = Math.min(window.devicePixelRatio || 1, 2), w = VW * v.cs, h = v.vh * v.cs;
+        v.cv.width = Math.round(w * d); v.cv.height = Math.round(h * d); v.cv.style.width = w + 'px'; v.cv.style.height = h + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+      });
+    }
+    /* ---------- input ---------- */
+    local(v, e) { const r = v.cv.getBoundingClientRect(); let x = e.clientX - r.left, y = e.clientY - r.top; if (v.rot) { x = r.width - x; y = r.height - y; } return { x: x / v.cs, y: y / v.cs }; }
+    bindInput(v) {
+      const OFF = 1.5;   // the crosshair sits above the finger so it stays visible
+      const upd = e => { const p = this.local(v, e), role = this.roleOf(v);
+        if (role === 'shooter') { const s = E.clampShot({ tx: GXu(p.x), ty: GYu(p.y - OFF), p: 0.5 }); v.aim = { x: s.tx, y: s.ty }; }
+        else { const k = E.clampKeep({ kx: GXu(p.x), ky: GYu(p.y - 0.6) }); v.mark = k; } };
+      v.cv.addEventListener('pointerdown', e => { e.preventDefault(); if (this.state !== 'prep' || this.paused) return; try { v.cv.setPointerCapture(e.pointerId); } catch (x) {} upd(e); if (this.roleOf(v) === 'shooter') { v.charging = true; v.t0 = performance.now(); SFX.tap(); } });
+      v.cv.addEventListener('pointermove', e => { if (this.state !== 'prep' || this.paused) return; if (this.roleOf(v) === 'shooter' && !v.charging) return; if (e.buttons || v.charging || e.pointerType === 'touch') upd(e); });
+      const up = e => { if (!v.charging) return; v.charging = false; if (this.state !== 'prep' || this.paused) return; upd(e); this.shootFrom(v); };
+      v.cv.addEventListener('pointerup', up); v.cv.addEventListener('pointercancel', () => { v.charging = false; }); v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    pwr(v) { return 0.25 + 0.75 * tri((performance.now() - v.t0) / 1500); }
+    shootFrom(v) { if (!v.aim) return; this.doShot(E.clampShot({ tx: v.aim.x, ty: v.aim.y, p: this.pwr(v) })); }
+    /* ---------- kick flow ---------- */
+    beginKick() {
+      this.state = 'prep'; this.fl = null; this.out = null;
+      this.views.forEach(v => { v.aim = null; v.charging = false; v.mark = { kx: 0, ky: E.KY0 }; });
+      this.botIn = this.botShoots() ? 1.6 + this.Rb() * 1.6 : null; this.autoIn = this.net && this.shooterSide() === this.me ? 15 : null;
+      if (this.mode === 'two') this.msg.textContent = T('pen_two_help');
+      else if (this.roleOf(this.views[0]) === 'shooter') this.msg.textContent = T('pen_aim');
+      else this.msg.textContent = T(this.net ? 'pen_keep_wait' : 'pen_keep');
+      if (this.net && this.queued && this.queued.i === this.i) { const m = this.queued; this.queued = null; this.onMessage(m); }
+    }
+    ctx() { return { wind: this.wind, defenders: this.defs }; }
+    doShot(shot) {
+      if (this.state !== 'prep') return; const s = this.shooterSide();
+      if ((this.net && s !== this.me) || (this.mode === 'cpu' && s === 1 && !this.botGo)) return;   // only the kicker may shoot (the bot goes through botFire)
+      this.shots++;
+      if (this.net) { this.pend = { shot }; this.state = 'await'; this.msg.textContent = T('pen_wait_keeper'); Net.link.send({ type: 'shot', i: this.i, tx: shot.tx, ty: shot.ty, p: shot.p }); SFX.tap(); return; }
+      let keep;
+      if (this.mode === 'two') keep = this.viewOf(1 - s).mark;
+      else keep = E.botKeep(this.lv ? this.lv.keeper : this.botLvl, this.shotH[s], this.Rb);
+      this.startFly(shot, keep);
+    }
+    botFire() {
+      const s = this.shooterSide(), sh = E.botShot(this.botLvl, this.diveH[1 - s], this.Rb, {}); this.startFly(sh, this.views[0].mark);
+    }
+    startFly(shot, keep) {
+      const s = this.shooterSide();
+      const botSh = this.mode === 'cpu' && s === 1, botKp = this.mode === 'solo' || (this.mode === 'cpu' && s === 0);
+      const kl = botKp ? (this.lv ? this.lv.keeper : this.botLvl) : 2, skill = botSh ? E.SKILL[this.botLvl] : (this.lv ? this.lv.skill : 1);
+      this.shot = shot; this.keep = keep; this.kl = kl; this.out = E.resolve(shot, keep, Object.assign({ seed: this.seed, i: this.i, skill, kl }, this.ctx()));
+      this.fl = { t: 0, T: this.out.T }; this.state = 'fly'; this.msg.textContent = ''; this.botIn = null; this.autoIn = null; SFX.hit(); vib(15);
+    }
+    arrive() {
+      const o = this.out, s = this.shooterSide(), goal = o.res === 'goal'; this.state = 'res'; this.resT = 1.5;
+      this.sc.k[s]++; if (goal) this.sc.g[s]++; this.log[s].push(goal ? 1 : 0); this.shotH[s].push({ x: o.x, y: o.y }); this.diveH[1 - s].push({ x: o.kp.x, y: o.kp.y });
+      if (goal) { SFX.win(); vib(40); } else if (o.res === 'saved') { SFX.lock(); vib(30); } else SFX.lose();
+      this.msg.textContent = '';
+    }
+    advance() {
+      let end = null;
+      if (this.mode === 'solo') { const st = E.levelState(this.lv, this.sc.g[0], this.sc.k[0]); if (st.done) end = st; } else { const d = E.decided(this.sc); if (d !== null) end = { res: d }; }
+      if (end) { this.state = 'end'; setTimeout(() => this.finish(end), 300); return; }
+      this.i++; this.beginKick();
+    }
+    onMessage(m) {
+      if (m.type === 'shot') {
+        if (m.i === this.i && this.state === 'prep' && this.shooterSide() !== this.me) { const shot = E.clampShot(m), keep = E.clampKeep(this.views[0].mark); Net.link.send({ type: 'keep', i: this.i, kx: keep.kx, ky: keep.ky }); this.startFly(shot, keep); }
+        else if (m.i >= this.i && this.state !== 'end' && this.state !== 'fin') this.queued = m;
+      } else if (m.type === 'keep') { if (m.i === this.i && this.state === 'await' && this.pend) { const sh = this.pend.shot; this.pend = null; this.startFly(sh, E.clampKeep(m)); } }
+      else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('pen'); let html = '', btns = '';
+      if (m === 'solo') {
+        const win = !!end.win, n = this.lv.n;
+        if (win) { if (end.stars > (st.lv[n] || 0)) st.lv[n] = end.stars; st.games++; st.wins++; saveP(); Meta.after('pen', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(end.stars)}${'☆'.repeat(3 - end.stars)}</div><p>⚽ ${this.sc.g[0]}/${this.sc.k[0]}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('pen', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>⚽ ${this.sc.g[0]}/${this.lv.goal}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (r === 'draw') title = T('draw'); else if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('pen', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('pen', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>⚽ ${this.sc.g[0]} : ${this.sc.g[1]}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; this.paused = true; const online = this.net;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      if (!this.paused) {
+        if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.beginKick(); SFX.go(); } }
+        else if (this.state === 'prep') {
+          if (this.botIn != null) { this.botIn -= dt; if (this.botIn <= 0) { this.botIn = null; this.botFire(); } }
+          if (this.autoIn != null) { this.autoIn -= dt; if (this.autoIn <= 0) { this.autoIn = null; const v = this.views[0]; this.doShot(E.clampShot({ tx: v.aim ? v.aim.x : (this.Rb() - 0.5) * 1.2, ty: v.aim ? v.aim.y : 0.3, p: 0.5 })); } }
+        }
+        else if (this.state === 'fly') { this.fl.t += dt; if (this.fl.t >= this.fl.T) this.arrive(); }
+        else if (this.state === 'res') { this.fl.t += dt; this.resT -= dt; if (this.resT <= 0) this.advance(); }
+      }
+      this.t += dt; this.draw(); this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    /* ---------- drawing ---------- */
+    draw() { this.views.forEach(v => { if (v.ctx) this.drawView(v); }); this.stat(); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return; const w = this.wind, arrow = w > 0.005 ? '→' : w < -0.005 ? '←' : '·';
+      if (this.mode === 'solo') st.innerHTML = `<span>⚽ ${this.sc.g[0]}/${this.lv.goal}<small>${T('pen_need', { n: this.lv.goal })}</small></span><span>${Math.min(this.sc.k[0] + (this.state === 'prep' || this.state === 'fly' || this.state === 'await' ? 1 : 0), this.lv.kicks)}/${this.lv.kicks}<small>${T('pen_kick')}</small></span><span>${arrow} ${Math.abs(w * 10).toFixed(1)}<small>${T('pen_wind')}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">⚽ ${this.sc.g[0]}<small>${esc(this.nameOf(0))}</small></span><span>${this.i >= E.BEST * 2 ? T('pen_sd') : (Math.floor(this.i / 2) + 1) + '/' + E.BEST}<small>${T('pen_kick')}</small></span><span style="color:${TEAM[1]}">⚽ ${this.sc.g[1]}<small>${esc(this.nameOf(1))}</small></span>`;
+    }
+    // each dot carries a ✓ or ✗ so a result never depends on color alone
+    dots(c, x, y, arr, total, r) { for (let k = 0; k < total; k++) { const cx = x + k * r * 2.7; c.beginPath(); c.arc(cx, y, r, 0, 7); if (k < arr.length) { c.fillStyle = arr[k] ? '#59d28a' : '#ff6b6b'; c.fill(); c.strokeStyle = '#10221a'; c.lineWidth = r * 0.3; c.lineCap = 'round'; c.beginPath(); if (arr[k]) { c.moveTo(cx - r * 0.45, y); c.lineTo(cx - r * 0.1, y + r * 0.38); c.lineTo(cx + r * 0.5, y - r * 0.35); } else { c.moveTo(cx - r * 0.38, y - r * 0.38); c.lineTo(cx + r * 0.38, y + r * 0.38); c.moveTo(cx + r * 0.38, y - r * 0.38); c.lineTo(cx - r * 0.38, y + r * 0.38); } c.stroke(); } else { c.strokeStyle = 'rgba(255,255,255,.6)'; c.lineWidth = r * 0.28; c.stroke(); } } }
+    drawView(v) {
+      const c = v.ctx, cs = v.cs, vh = v.vh, sp = v.sp, X = x => x * cs, Y = y => y * cs, role = this.roleOf(v), now = performance.now(), o = this.out, fl = this.fl, bgA = Art.get('bg-pen');
+      c.clearRect(0, 0, VW * cs, vh * cs); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, VW * cs, vh * cs, 14); c.clip();
+      if (bgA) c.drawImage(bgA, 0, 0, VW * cs, vh * cs);
+      else {
+        const sk = c.createLinearGradient(0, 0, 0, Y(4.4)); sk.addColorStop(0, '#2b3f63'); sk.addColorStop(1, '#4a6a9a'); c.fillStyle = sk; c.fillRect(0, 0, X(VW), Y(4.4));
+        crowd().forEach(d => { c.fillStyle = d.c; c.globalAlpha = 0.85; c.beginPath(); c.arc(X(d.x), Y(d.y), d.r * cs, 0, 7); c.fill(); }); c.globalAlpha = 1;
+        for (let k = 0; 4.4 + k * 1.6 < vh; k++) { c.fillStyle = k % 2 ? '#4aa35c' : '#58b36a'; c.fillRect(0, Y(4.4 + k * 1.6), X(VW), Y(1.6) + 1); }
+        c.strokeStyle = 'rgba(255,255,255,.75)'; c.lineWidth = cs * 0.07; c.beginPath(); c.moveTo(X(0), Y(4.4)); c.lineTo(X(VW), Y(4.4)); c.moveTo(X(1.2), Y(4.4)); c.lineTo(X(-1.2), Y(8.6)); c.moveTo(X(8.8), Y(4.4)); c.lineTo(X(11.2), Y(8.6)); c.moveTo(X(-1.2), Y(8.6)); c.lineTo(X(11.2), Y(8.6)); c.stroke();
+        c.beginPath(); c.ellipse(X(5), Y(sp + 3), X(3.4), Y(3.6), 0, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
+        c.fillStyle = 'rgba(255,255,255,.9)'; c.beginPath(); c.ellipse(X(5), Y(sp + 0.35), cs * 0.16, cs * 0.07, 0, 0, 7); c.fill();
+      }
+      this.drawBoard(c, cs); this.drawWind(c, cs, now);
+      // goal back net + shade
+      c.fillStyle = 'rgba(10,18,30,.45)'; c.fillRect(X(1), Y(1.6), X(8), Y(2.8));
+      c.strokeStyle = 'rgba(255,255,255,.22)'; c.lineWidth = cs * 0.025; for (let k = 1; k < 16; k++) { c.beginPath(); c.moveTo(X(1 + k * 0.5), Y(1.6)); c.lineTo(X(1 + k * 0.5), Y(4.4)); c.stroke(); } for (let k = 1; k < 6; k++) { c.beginPath(); c.moveTo(X(1), Y(1.6 + k * 0.47)); c.lineTo(X(9), Y(1.6 + k * 0.47)); c.stroke(); }
+      this.defs.forEach(d => this.drawDummy(c, cs, d));
+      // keeper
+      let kp = { x: 0, y: E.KY0, f: 0 };
+      if (fl && this.keep) { const tt = Math.min(fl.t, fl.T + 0.45); const k2 = E.keeperAt(this.keep, tt, this.kl); kp = { x: k2.x, y: k2.y, f: k2.frac }; if (this.state === 'res' && o && o.res === 'saved') kp = { x: o.kp.x, y: o.kp.y, f: 1 }; if (fl.t > fl.T) { const kk = E.keeperAt(this.keep, fl.T + Math.min(0.45, fl.t - fl.T), this.kl); kp = { x: kk.x, y: kk.y, f: kk.frac }; } }
+      else if (this.state === 'prep') kp = { x: Math.sin(now / 420) * 0.04, y: E.KY0 + Math.sin(now / 300) * 0.012, f: 0 };
+      this.drawKeeper(c, cs, kp);
+      // keeper marker (the keeper's own screen only)
+      if (this.state === 'prep' && role === 'keeper') { const m = v.mark; c.strokeStyle = '#ffd877'; c.lineWidth = cs * 0.08; c.setLineDash([cs * 0.2, cs * 0.18]); c.beginPath(); c.moveTo(X(SX(0)), Y(SY(E.KY0))); c.lineTo(X(SX(m.kx)), Y(SY(m.ky))); c.stroke(); c.setLineDash([]); c.fillStyle = 'rgba(255,216,119,.35)'; c.beginPath(); c.arc(X(SX(m.kx)), Y(SY(m.ky)), cs * 0.62, 0, 7); c.fill(); c.strokeStyle = '#ffd877'; c.beginPath(); c.arc(X(SX(m.kx)), Y(SY(m.ky)), cs * 0.62, 0, 7); c.stroke(); c.font = `${cs * 0.8}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff'; c.fillText('🧤', X(SX(m.kx)), Y(SY(m.ky))); }
+      // posts + bar
+      c.strokeStyle = '#f4f4f4'; c.lineWidth = cs * 0.2; c.lineCap = 'round'; c.beginPath(); c.moveTo(X(1), Y(4.4)); c.lineTo(X(1), Y(1.6)); c.lineTo(X(9), Y(1.6)); c.lineTo(X(9), Y(4.4)); c.stroke();
+      // ball
+      this.drawBall(c, cs, v);
+      // aim helpers (the shooter's own screen only)
+      if (this.state === 'prep' && role === 'shooter') this.drawAim(c, cs, v);
+      // result banner
+      if (this.state === 'res' && o) { const k = Math.min(1, fl.t - fl.T + 0.2); c.save(); c.globalAlpha = Math.min(1, k * 3); c.font = `900 ${cs * 1.5}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.22; c.strokeStyle = 'rgba(0,0,0,.65)'; c.fillStyle = o.res === 'goal' ? '#6dffa0' : '#ffd877'; const tx = T(RES_KEY[o.res]); c.strokeText(tx, X(5), Y(7.6 - Math.min(0.5, k * 0.5))); c.fillText(tx, X(5), Y(7.6 - Math.min(0.5, k * 0.5))); c.restore(); }
+      c.restore();
+    }
+    drawBoard(c, cs) {
+      const X = x => x * cs, Y = y => y * cs; c.fillStyle = 'rgba(8,14,24,.78)'; c.beginPath(); c.roundRect(X(1.4), Y(0.12), X(7.2), Y(1.2), cs * 0.25); c.fill();
+      c.font = `800 ${cs * 0.5}px system-ui`; c.textBaseline = 'middle'; c.fillStyle = '#fff';
+      if (this.mode === 'solo') { c.textAlign = 'center'; this.dots(c, X(5) - (this.lv.kicks - 1) * cs * 0.25 * 2.7 / 1, Y(0.72), this.log[0], this.lv.kicks, cs * 0.25); c.font = `700 ${cs * 0.4}px system-ui`; c.fillStyle = '#ffd877'; c.fillText('⚽ ' + this.sc.g[0] + ' / ' + this.lv.goal, X(5), Y(1.1) - cs * 0.04); }
+      else { const tot = Math.max(E.BEST, this.log[0].length, this.log[1].length), r = cs * Math.min(0.2, 3.6 / tot / 2.7 * 1); [0, 1].forEach(s => { const y = Y(0.42 + s * 0.52); c.textAlign = 'left'; c.fillStyle = TEAM[s]; c.font = `800 ${cs * 0.38}px system-ui`; c.fillText(this.nameOf(s).slice(0, 7), X(1.6), y); this.dots(c, X(4.4), y, this.log[s], tot, r); c.textAlign = 'right'; c.fillStyle = '#fff'; c.fillText(this.sc.g[s], X(8.4), y); }); }
+    }
+    drawWind(c, cs, now) {
+      if (!this.wind && this.mode !== 'solo') return; const X = x => x * cs, Y = y => y * cs, w = this.wind; if (!w) return;
+      const px = X(8.9), py = Y(4.4); c.strokeStyle = '#ddd'; c.lineWidth = cs * 0.06; c.beginPath(); c.moveTo(px, py); c.lineTo(px, py - cs * 1.5); c.stroke();
+      const dir = Math.sign(w), len = cs * (0.5 + Math.abs(w) * 4), wob = Math.sin(now / 160) * cs * 0.05; c.fillStyle = '#ffd877'; c.beginPath(); c.moveTo(px, py - cs * 1.5); c.lineTo(px + dir * len, py - cs * 1.35 + wob); c.lineTo(px, py - cs * 1.1); c.fill();
+    }
+    drawDummy(c, cs, d) { const X = x => x * cs, Y = y => y * cs, x = SX(d.x), w = d.w * 8, h = d.h * 4, art = Art.get('pen-dummy'); if (art) { c.drawImage(art, X(x - w / 2 - 0.15), Y(4.4 - h - 0.1), X(w + 0.3), Y(h + 0.1)); return; }
+      c.fillStyle = '#e8a23c'; c.strokeStyle = '#7a4d0f'; c.lineWidth = cs * 0.05; c.beginPath(); c.roundRect(X(x - w / 2), Y(4.4 - h), X(w), Y(h), cs * 0.25); c.fill(); c.stroke(); c.fillStyle = '#fff'; [-0.22, 0.22].forEach(o => { c.beginPath(); c.arc(X(x + o * w), Y(4.4 - h + 0.28), cs * 0.1, 0, 7); c.fill(); }); c.fillStyle = '#333'; [-0.22, 0.22].forEach(o => { c.beginPath(); c.arc(X(x + o * w), Y(4.4 - h + 0.3), cs * 0.045, 0, 7); c.fill(); }); }
+    drawKeeper(c, cs, kp) {
+      const X = x => x * cs, Y = y => y * cs, x = SX(kp.x), y = SY(kp.y), art = Art.get('pen-keeper'), lean = Math.max(-1, Math.min(1, kp.x * 1.1)) * kp.f * 1.15 + (kp.y > E.KY0 ? 0 : 0), up = (kp.y - E.KY0) * 2.2;
+      c.save(); c.translate(X(x), Y(y)); c.rotate(lean);
+      if (art) c.drawImage(art, -cs * 1.1, -cs * 1.25, cs * 2.2, cs * 2.5);
+      else {
+        c.fillStyle = 'rgba(0,0,0,.25)'; c.save(); c.rotate(-lean); c.beginPath(); c.ellipse(0, Y(4.4 - y) + cs * 0.1 - cs * 0.0, cs * 0.8, cs * 0.14, 0, 0, 7); c.restore();
+        const spread = 0.55 + kp.f * 0.55; c.strokeStyle = '#2b3b57'; c.lineWidth = cs * 0.26; c.lineCap = 'round';
+        c.beginPath(); c.moveTo(-cs * 0.3, cs * 0.5); c.lineTo(-cs * 0.4, cs * 1.0); c.moveTo(cs * 0.3, cs * 0.5); c.lineTo(cs * 0.4, cs * 1.0); c.stroke();
+        c.fillStyle = '#f0b33a'; c.beginPath(); c.roundRect(-cs * 0.45, -cs * 0.55, cs * 0.9, cs * 1.15, cs * 0.3); c.fill(); c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = cs * 0.05; c.stroke();
+        c.strokeStyle = '#f0b33a'; c.lineWidth = cs * 0.24; c.beginPath(); c.moveTo(-cs * 0.35, -cs * 0.3); c.lineTo(-cs * spread * 1.5, -cs * (0.55 + up * 0.5)); c.moveTo(cs * 0.35, -cs * 0.3); c.lineTo(cs * spread * 1.5, -cs * (0.55 + up * 0.5)); c.stroke();
+        c.fillStyle = '#59c46a'; [-1, 1].forEach(sg => { c.beginPath(); c.arc(sg * cs * spread * 1.5, -cs * (0.55 + up * 0.5), cs * 0.27, 0, 7); c.fill(); c.strokeStyle = '#2d7a3a'; c.lineWidth = cs * 0.04; c.stroke(); });
+        c.fillStyle = '#f7d08a'; c.beginPath(); c.arc(0, -cs * 0.82, cs * 0.4, 0, 7); c.fill(); c.fillStyle = '#e0a04c'; [-1, 1].forEach(sg => { c.beginPath(); c.moveTo(sg * cs * 0.18, -cs * 1.08); c.lineTo(sg * cs * 0.38, -cs * 1.4); c.lineTo(sg * cs * 0.42, -cs * 1.0); c.fill(); });
+        c.fillStyle = '#fff'; [-1, 1].forEach(sg => { c.beginPath(); c.arc(sg * cs * 0.16, -cs * 0.85, cs * 0.1, 0, 7); c.fill(); }); c.fillStyle = '#222'; [-1, 1].forEach(sg => { c.beginPath(); c.arc(sg * cs * 0.16 + lean * cs * 0.02, -cs * 0.84, cs * 0.05, 0, 7); c.fill(); });
+      }
+      c.restore();
+    }
+    drawBall(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, fl = this.fl, o = this.out, art = Art.get('pen-ball'); const SP = [5, v.sp]; let x = SP[0], y = SP[1], r = 0.55, rot = 0, a = 1;
+      if (fl && o) {
+        const p = Math.min(1, fl.t / fl.T), ex = SX(o.x), ey = SY(o.y), e = 1 - Math.pow(1 - p, 1.4);
+        x = SP[0] + (ex - SP[0]) * p; y = SP[1] + (ey - SP[1]) * e - Math.sin(Math.PI * p) * (1.0 + o.y * 1.2); r = 0.55 - 0.3 * p; rot = fl.t * 22;
+        if (fl.t > fl.T) { const q = fl.t - fl.T; x = ex; y = ey; r = 0.25;
+          if (o.res === 'saved') { const dir = Math.sign(o.x - o.kp.x) || 1; x = ex + dir * q * 3.2; y = ey + q * q * 9 - q * 1.2; r = 0.25 + q * 0.1; rot += q * 15; }
+          else if (o.res === 'goal') { y = ey + Math.min(q, 0.5) * Math.min(q, 0.5) * 3.2; }
+          else if (o.res === 'post') { x = ex + Math.sign(o.x || 1) * q * 2.2; y = ey + q * 3 * (q - 0.6) * 3; r = 0.25 + q * 0.2; }
+          else if (o.res === 'blocked') { y = ey + q * q * 8; x = ex - Math.sign(o.x || 1) * q * 1.2; }
+          else { x = ex + (ex - SP[0]) * q * 0.4; y = ey - (o.res === 'over' ? q * 2.5 : q * 0.4); r = 0.25 - Math.min(0.12, q * 0.1); a = Math.max(0, 1 - q * 0.8); } }
+      } else if (this.state === 'prep') { y = SP[1] + Math.sin(this.t * 3) * 0.02; }
+      c.save(); c.globalAlpha = a; c.fillStyle = 'rgba(0,0,0,.25)'; if (!fl || fl.t < 0.01) { c.beginPath(); c.ellipse(X(x), Y(y + r * 0.9), r * cs * 0.9, r * cs * 0.28, 0, 0, 7); c.fill(); }
+      c.translate(X(x), Y(y)); c.rotate(rot);
+      if (art) c.drawImage(art, -r * cs, -r * cs, r * 2 * cs, r * 2 * cs);
+      else { c.fillStyle = '#fff'; c.beginPath(); c.arc(0, 0, r * cs, 0, 7); c.fill(); c.strokeStyle = '#1b1b1f'; c.lineWidth = Math.max(1, r * cs * 0.12); c.stroke(); c.fillStyle = '#1b1b1f'; for (let k = 0; k < 5; k++) { const an = k * Math.PI * 2 / 5; c.beginPath(); c.arc(Math.cos(an) * r * cs * 0.62, Math.sin(an) * r * cs * 0.62, r * cs * 0.2, 0, 7); c.fill(); } c.beginPath(); c.arc(0, 0, r * cs * 0.24, 0, 7); c.fill(); }
+      c.restore();
+    }
+    drawAim(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs;
+      if (!v.aim) { c.fillStyle = 'rgba(255,255,255,.85)'; c.font = `700 ${cs * 0.5}px system-ui`; c.textAlign = 'center'; c.fillText('☝', X(5), Y(v.sp - 6.3)); return; }
+      const p = v.charging ? this.pwr(v) : 0.5, s = E.sigma(p), ax = X(SX(v.aim.x)), ay = Y(SY(v.aim.y));
+      c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = cs * 0.06; c.setLineDash([cs * 0.2, cs * 0.2]); c.beginPath(); c.moveTo(X(5), Y(v.sp)); c.lineTo(ax, ay); c.stroke(); c.setLineDash([]);
+      c.fillStyle = 'rgba(255,216,119,.18)'; c.strokeStyle = '#ffd877'; c.lineWidth = cs * 0.07; c.beginPath(); c.arc(ax, ay, Math.max(cs * 0.3, s * 4 * cs), 0, 7); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(ax - cs * 0.4, ay); c.lineTo(ax + cs * 0.4, ay); c.moveTo(ax, ay - cs * 0.4); c.lineTo(ax, ay + cs * 0.4); c.stroke();
+      if (v.charging) { const gx = X(9.35), gy0 = Y(v.sp + 0.6), gh = Y(Math.min(6.2, v.sp - 6)); c.fillStyle = 'rgba(0,0,0,.5)'; c.beginPath(); c.roundRect(gx - cs * 0.28, gy0 - gh, cs * 0.56, gh, cs * 0.28); c.fill(); const g = c.createLinearGradient(0, gy0, 0, gy0 - gh); g.addColorStop(0, '#59d28a'); g.addColorStop(0.6, '#f0c24b'); g.addColorStop(1, '#ff6b6b'); c.fillStyle = g; c.beginPath(); c.roundRect(gx - cs * 0.2, gy0 - cs * 0.08 - (gh - cs * 0.16) * p, cs * 0.4, (gh - cs * 0.16) * p, cs * 0.2); c.fill(); c.font = `${cs * 0.5}px system-ui`; c.textAlign = 'center'; c.fillStyle = '#fff'; c.fillText('⚡', gx, gy0 - gh - cs * 0.3); }
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'pen'; setPlayBg('pen'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.pen = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#58b36a"/><rect x="14" y="10" width="62" height="30" fill="none" stroke="#fff" stroke-width="3"/><path d="M14 10 62 40M30 10 76 40M14 25 45 40" stroke="#fff" stroke-opacity=".3"/><circle cx="45" cy="56" r="7" fill="#fff" stroke="#222" stroke-width="2"/><circle cx="45" cy="56" r="2.6" fill="#222"/><path d="M45 50 C40 36 52 28 58 20" stroke="#ffd877" stroke-width="2" stroke-dasharray="3 3" fill="none"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'pen', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+})();
+
+/* ===== src/shell2.js ===== */
+'use strict';
+/* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
+const GAME_IDS = ['pen'], GICON = { pen: '⚽' };
+const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
+(function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
+  const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
+  for (const l in P) GAME_IDS.forEach(g => { const L = LANG[l], t = L['g_' + g] || g; if (!L['st_first_' + g]) L['st_first_' + g] = P[l][0] + t; if (!L['std_first_' + g]) L['std_first_' + g] = P[l][1] + t; });
+})();
+const META = Object.assign({ daily: { done: {}, last: '', streak: 0, best: 0 }, stk: {}, cnt: {}, last: null }, store.get('sn_meta', {}));
+const saveMeta = () => store.set('sn_meta', META);
+const dayKey = (d) => { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const dayNo = (k) => { const p = (k || dayKey()).split('-').map(Number); return Math.floor(Date.UTC(p[0], p[1] - 1, p[2]) / 864e5); };
+const NLEV = g => Games[g] && Games[g].levels ? Games[g].levels.length : 0;
+const gTitle = g => T('g_' + g);
+const starsOf = g => Object.values(pg(g).lv).reduce((a, b) => a + b, 0);
+const doneOf = g => Object.values(pg(g).lv).filter(x => x >= 1).length;
+const totalStars = () => GAME_IDS.reduce((a, g) => a + starsOf(g), 0);
+function dailyTarget(k) {
+  const n = dayNo(k), ready = GAME_IDS.filter(g => Games[g] && Games[g].ready), g = ready[n % ready.length], N = NLEV(g);
+  const lo = Math.floor(N * 0.12), hi = Math.floor(N * 0.5); const h = ((n * 2654435761) >>> 0) % Math.max(1, hi - lo);
+  return { g, n: lo + h + 1, date: k || dayKey() };
+}
+const Meta = {
+  after(g, mode, win, n) {
+    const c = META.cnt; c[mode] = (c[mode] || 0) + 1; if (win) c[mode + '_w'] = (c[mode + '_w'] || 0) + 1;
+    const dt = dailyTarget(); let fresh = [];
+    if (win && mode === 'solo' && dt.g === g && dt.n === n && !META.daily.done[dt.date]) {
+      META.daily.done[dt.date] = 1; const y = dayKey(new Date(Date.now() - 864e5));
+      META.daily.streak = META.daily.last === y ? META.daily.streak + 1 : 1; META.daily.last = dt.date; META.daily.best = Math.max(META.daily.best, META.daily.streak); fresh.push('daily');
+    }
+    META.last = META.last || {}; if (mode === 'solo') META.last = { g, n };
+    const got = [], add = id => { if (!META.stk[id]) { META.stk[id] = Date.now(); got.push(id); } };
+    const stars = totalStars();
+    GAME_IDS.forEach(x => { if (doneOf(x) > 0) add('first_' + x); });
+    if (stars >= 10) add('stars10'); if (stars >= 50) add('stars50'); if (stars >= 150) add('stars150');
+    if (GAME_IDS.some(x => Object.values(pg(x).lv).some(s => s >= 3))) add('three');
+    if ((c.cpu_w || 0) > 0) add('cpu'); if ((c.two || 0) > 0) add('two'); if ((c.online || 0) > 0) add('online');
+    if (META.daily.last && Object.keys(META.daily.done).length) add('daily1'); if (META.daily.streak >= 3) add('streak3'); if (META.daily.streak >= 7) add('streak7');
+    saveMeta();
+    if (fresh.length) setTimeout(() => toast('📅 ' + T('daily_done'), 2400), 1500);
+    if (got.length) setTimeout(() => toast('🏅 ' + got.map(id => T('st_' + id)).join(' · '), 3200), fresh.length ? 4200 : 1600);
+  }
+};
+/* ---------- בית ---------- */
+function nextLevelOf(g) { const L = pg(g).lv, N = NLEV(g); for (let i = 1; i <= N; i++) if (!L[i]) return i; return 0; }
+RENDER.home = () => {
+  const el = $('#home'), dt = dailyTarget(), done = !!META.daily.done[dt.date], last = META.last && META.last.g, nl = last ? nextLevelOf(last) : 0;
+  const streak = META.daily.last && dayNo() - dayNo(META.daily.last) <= 1 ? META.daily.streak : 0;
+  const wk = []; for (let i = 6; i >= 0; i--) { const d = new Date(Date.now() - i * 864e5), k = dayKey(d); wk.push(`<i class="${META.daily.done[k] ? 'on' : ''} ${i === 0 ? 'today' : ''}">${['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'][d.getDay()] && S.lang === 'he' ? ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'][d.getDay()] : ['S', 'M', 'T', 'W', 'T', 'F', 'S'][d.getDay()]}</i>`); }
+  el.innerHTML = `<div class="hero">
+    <div class="toprow"><button class="me" data-act="me"><span class="av">${S.av}</span><span>${esc(nameOr())}</span></button>
+    <div class="quick"><button data-act="theme" aria-label="${T('theme')}">🎨</button><button data-act="mode" aria-label="${T('daymode')}">${S.mode === 'day' ? '☀️' : '🌙'}</button><button data-act="about" aria-label="${T('about')}">ℹ️</button></div></div>
+    <div class="wordmark">Sport<i>Nest</i></div><div class="sub">${T('app_sub')}</div>
+    <div class="floaty" aria-hidden="true"><span>⚽</span><span>🥅</span><span>🏀</span><span>🎯</span><span>🥊</span></div></div>
+  ${nl ? `<button class="resume" data-act="resume"><span style="font-size:28px">${GICON[last]}</span><span style="flex:1">${T('cont')}: ${esc(gTitle(last))} · ${T('s_level')} ${nl}</span><span>▶</span></button>` : ''}
+  <button class="dailyb ${done ? 'done' : ''}" data-act="daily"><span class="ic">${done ? '✅' : '📅'}</span><span style="flex:1"><b>${T('daily')}</b><small>${esc(gTitle(dt.g))} · ${T('s_level')} ${dt.n}${streak ? ' · 🔥 ' + T('streak_n', { n: streak }) : ''}</small></span></button>
+  <div class="week">${wk.join('')}</div>
+  <div class="tiles">${Object.keys(Games).filter(g => Games[g].ready).map(g => `<div class="tile" data-g="${g}"><div class="art">${artImg('tile-' + g) || Games[g].art()}</div><b>${T('g_' + g)}</b><small>${T('d_' + g)}</small></div>`).join('')}${Object.keys(Games).filter(g => Games[g].ready).length % 2 ? `<div class="tile" style="opacity:.6;cursor:default"><div class="art">${artImg('tile-next1') || '<span style="font-size:52px">🪺</span>'}</div><b>${({he:'בקרוב',en:'Coming soon',ru:'Скоро',es:'Próximamente',ar:'قريباً'})[S.lang] || ''}</b><small>&nbsp;</small></div>` : ''}</div>
+  <div class="tools"><button data-act="rules"><i>📖</i><span>${T('rules')}</span></button><button data-act="album"><i>🃏</i><span>${T('album')}</span></button><button data-act="stats"><i>🏅</i><span>${T('stats')}</span></button><button data-act="settings"><i>⚙️</i><span>${T('settings')}</span></button></div>
+  <div class="badge">AppNest · <b>SportNest</b> · v${APP_VERSION}</div>`;
+  $$('[data-g]', el).forEach(t => t.onclick = () => { SFX.tap(); openGame(t.dataset.g); });
+  const A = (a, f) => { const b = $('[data-act=' + a + ']', el); if (b) b.onclick = () => { SFX.tap(); f(); }; };
+  A('me', playersBox); A('theme', () => { S.theme = THEMES[(THEMES.indexOf(S.theme) + 1) % THEMES.length]; saveS(); applyTheme(); toast(T('theme') + ': ' + T('th_' + S.theme), 1200); });
+  A('mode', () => { S.mode = S.mode === 'day' ? 'night' : 'day'; saveS(); applyTheme(); render('home'); });
+  A('about', () => { show('about'); render('about'); }); A('settings', () => { show('settings'); render('settings'); });
+  A('rules', () => { show('rules'); render('rules'); }); A('album', () => { show('album'); render('album'); }); A('stats', () => { show('stats'); render('stats'); });
+  A('resume', () => { curGame = last; Games[last].startSolo(nl); });
+  A('daily', () => { curGame = dt.g; Games[dt.g].startSolo(dt.n); });
+};
+function playersBox() {
+  const o = openOv(`<h3>${T('me')}</h3><div class="lbl" style="margin-top:0;text-align:start">${T('name')}</div><input class="txt" id="pbName" maxlength="14" value="${esc(S.name)}" placeholder="${T('you')}"><div class="lbl" style="text-align:start">${T('pick_av')}</div><div class="avs" id="pbAv" style="justify-content:center">${AVATARS.map(a => `<button data-a="${a}" class="${S.av === a ? 'on' : ''}">${a}</button>`).join('')}</div><button class="btn pri" data-x>${T('ok')}</button>`);
+  $('#pbName', o).oninput = e => { S.name = e.target.value.slice(0, 14); saveS(); };
+  $$('#pbAv button', o).forEach(b => b.onclick = () => { S.av = b.dataset.a; saveS(); $$('#pbAv button', o).forEach(x => x.classList.toggle('on', x === b)); });
+  $('[data-x]', o).onclick = () => { closeOv(o); if (curSc === 'home') render('home'); };
+}
+/* ---------- חוקים / הישגים / אלבום ---------- */
+RENDER.rules = () => {
+  const el = $('#rules'); el.innerHTML = backBar(T('rules')) + '<div class="rules">' + GAME_IDS.map(g => `<h2>${GICON[g]} ${esc(gTitle(g))}</h2>${T('ru_' + g)}`).join('') + '</div>'; wireBack(el);
+};
+RENDER.stats = () => {
+  const el = $('#stats'), d = META.daily, streak = d.last && dayNo() - dayNo(d.last) <= 1 ? d.streak : 0;
+  let h = backBar(T('stats')) + `<div class="card"><h3>🔥 ${T('daily')}</h3><div class="stat3"><div><b>${streak}</b><span>${T('s_streak')}</span></div><div><b>${d.best}</b><span>${T('s_best')}</span></div><div><b>${Object.keys(d.done).length}</b><span>${T('s_dailies')}</span></div></div></div>`;
+  for (const g of GAME_IDS) { const p = pg(g); h += `<div class="card"><h3>${GICON[g]} ${esc(gTitle(g))}</h3><div class="stat3"><div><b>${doneOf(g)}/${NLEV(g)}</b><span>${T('s_done')}</span></div><div><b>${starsOf(g)}</b><span>${T('s_stars')}</span></div><div><b>${Object.values(p.lv).filter(x => x >= 3).length}</b><span>${T('s_three')}</span></div></div><div class="stat3" style="margin-top:8px"><div><b>${p.wins || 0}</b><span>${T('s_wins')}</span></div><div><b>${p.games || 0}</b><span>${T('s_games')}</span></div><div></div></div></div>`; }
+  el.innerHTML = h; wireBack(el);
+};
+RENDER.album = () => {
+  const el = $('#album'), n = STICKERS.filter(s => META.stk[s[0]]).length;
+  el.innerHTML = backBar(T('album')) + `<p class="hint">${T('album_d')} · ${n}/${STICKERS.length}</p><div class="stk">${STICKERS.map(([id, ic]) => `<button data-s="${id}" class="${META.stk[id] ? 'got' : ''}"><i>${ic}</i><span>${esc(T('st_' + id))}</span></button>`).join('')}</div>`; wireBack(el);
+  $$('[data-s]', el).forEach(b => b.onclick = () => { const id = b.dataset.s; toast((META.stk[id] ? '🏅 ' : '🔒 ') + T('std_' + id), 3000); });
+};
+/* ---------- הגדרות, גיבוי ---------- */
+const seg = (id, items, cur) => `<div class="seg" data-seg="${id}">${items.map(([v, l]) => `<button data-v="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+RENDER.settings = () => {
+  const el = $('#settings');
+  el.innerHTML = backBar(T('settings')) + `
+  <div class="card"><div class="lbl" style="margin-top:0">${T('name')}</div><input class="txt" id="sName" maxlength="14" value="${esc(S.name)}" placeholder="${T('you')}"><div class="lbl">${T('pick_av')}</div><div class="avs" id="sAv">${AVATARS.map(a => `<button data-a="${a}" class="${S.av === a ? 'on' : ''}">${a}</button>`).join('')}</div></div>
+  <div class="card"><h3>${T('lang')}</h3>${seg('lang', Object.keys(LANG).filter(l => LANG[l].name).map(l => [l, LANG[l].name]), S.lang)}</div>
+  <div class="card"><h3>${T('look')}</h3><div class="lbl" style="margin-top:0">${T('theme')}</div>${seg('theme', THEMES.map(t => [t, T('th_' + t)]), S.theme)}<div class="lbl">${T('daymode')}</div>${seg('mode', [['night', '🌙 ' + T('night')], ['day', '☀️ ' + T('day')]], S.mode)}</div>
+  <div class="card"><h3>${T('gameplay')}</h3>${[['sound', 'sound'], ['vib', 'vib']].map(([k, t]) => `<div class="sw"><span>${T(t)}</span><input type="checkbox" data-k="${k}" ${S[k] ? 'checked' : ''}></div>`).join('')}</div>
+  <div class="card"><h3>${T('backup')}</h3><p class="hint" style="text-align:start">${T('backup_d')}</p><div class="row"><button class="btn" id="bkOut" style="flex:1">⬇️ ${T('export')}</button><button class="btn" id="bkIn" style="flex:1">⬆️ ${T('import')}</button></div><input type="file" id="bkFile" accept="application/json,.json" style="display:none"></div>
+  <div class="card"><div class="row"><button class="btn" id="stGuide" style="flex:1">🧭 ${T('guide')}</button><button class="btn" id="stAbout" style="flex:1">ℹ️ ${T('about')}</button></div></div>
+  <button class="btn" id="sReset" style="margin-top:12px;border-color:var(--bad);color:var(--bad)">🗑 ${T('reset_all2')}</button>`;
+  wireBack(el);
+  $('#sName', el).oninput = e => { S.name = e.target.value.slice(0, 14); saveS(); };
+  $$('#sAv button', el).forEach(b => b.onclick = () => { S.av = b.dataset.a; saveS(); render('settings'); });
+  $$('[data-seg]', el).forEach(sg => $$('button', sg).forEach(b => b.onclick = () => { const k = sg.dataset.seg; S[k] = b.dataset.v; saveS(); if (k === 'lang') applyLang(); applyTheme(); render('settings'); }));
+  $$('[data-k]', el).forEach(c => c.onchange = () => { S[c.dataset.k] = c.checked; saveS(); });
+  $('#bkOut', el).onclick = exportBackup; $('#bkIn', el).onclick = () => $('#bkFile', el).click();
+  $('#bkFile', el).onchange = e => { const f = e.target.files[0]; if (f) importBackup(f); e.target.value = ''; };
+  $('#stGuide', el).onclick = () => showGuide(); $('#stAbout', el).onclick = () => { show('about'); render('about'); };
+  $('#sReset', el).onclick = () => confirmBox(T('reset_q1'), () => confirmBox(T('reset_q2'), () => { try { Object.keys(localStorage).filter(k => k.indexOf('sn_') === 0).forEach(k => localStorage.removeItem(k)); } catch (e) {} location.reload(); }));
+};
+function exportBackup() {
+  const data = { app: 'sportnest', v: APP_VERSION, by: S.name, date: new Date().toISOString(), settings: S, prog: P, meta: META };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' }), name = 'sportnest-backup-' + dayKey() + '.json';
+  const file = typeof File !== 'undefined' ? new File([blob], name, { type: 'application/json' }) : null;
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: 'SportNest' }).catch(() => {}); return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); toast(T('exported'));
+}
+function importBackup(f) {
+  const r = new FileReader();
+  r.onload = () => {
+    let d; try { d = JSON.parse(r.result); } catch (e) { toast(T('bad_file')); return; }
+    if (!d || d.app !== 'sportnest' || !d.prog) { toast(T('bad_file')); return; }
+    confirmBox(T('import_q', { n: d.by || '?', d: (d.date || '').slice(0, 10) }), () => { store.set('sn_set', d.settings || {}); store.set('sn_prog', d.prog || {}); store.set('sn_meta', d.meta || {}); location.reload(); });
+  };
+  r.readAsText(f);
+}
+/* ---------- אודות ---------- */
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; });
+RENDER.about = () => {
+  const el = $('#about'), nl = GAME_IDS.reduce((a, g) => a + NLEV(g), 0), link = location.origin + location.pathname;
+  el.innerHTML = backBar(T('about')) + `<div class="card" style="text-align:center"><img src="icon-192.png" alt="" width="84" height="84" style="border-radius:20px"><h2 style="margin:8px 0 2px">SportNest</h2><div class="hint">${T('app_sub')}</div><div class="hint" style="direction:ltr">v${APP_VERSION}</div></div>
+  <div class="card">${[['a_ver', 'v' + APP_VERSION], ['a_dev', 'Barak Aflalo'], ['a_plat', 'PWA · HTML5'], ['a_store', T('a_local')], ['a_levels', nl], ['a_lic', '© AppNest 2026']].map(([k, v]) => `<div class="sw"><span>${T(k)}</span><b style="direction:ltr">${v}</b></div>`).join('')}</div>
+  <div class="card" style="display:flex;flex-direction:column;gap:8px"><a class="btn linkbtn" href="https://appnest-store.pages.dev" target="_blank" rel="noopener">🏪 ${T('a_storeLink')}</a><button class="btn" id="aShare">📤 ${T('a_share')}</button>${deferredInstall ? `<button class="btn" id="aInst">📲 ${T('install')}</button>` : ''}<a class="btn linkbtn" href="mailto:appnest55@gmail.com?subject=SportNest">✉️ ${T('a_feedback')}</a><button class="btn" id="aGuide">🧭 ${T('guide')}</button><a class="btn linkbtn" href="privacy_policy.html" target="_blank">🔒 ${T('a_privacy')}</a></div>
+  <div class="card"><p class="hint" style="margin:0;text-align:start">${T('a_disc')}</p></div>`; wireBack(el);
+  $('#aShare', el).onclick = () => { const d = { title: 'SportNest', text: T('share_txt', { n: S.name || '' }), url: link }; if (navigator.share) navigator.share(d).catch(() => {}); else (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(() => toast(T('copied'))).catch(() => toast(link, 4000)); };
+  const ib = $('#aInst', el); if (ib) ib.onclick = () => { deferredInstall.prompt(); deferredInstall = null; };
+  $('#aGuide', el).onclick = () => showGuide();
+};
+/* ---------- מדריך (5 שלבים) ---------- */
+function showGuide() {
+  if (guideEl) return; let i = 0; const steps = [['🪺', 'g1'], ['🗺️', 'g2'], ['👆', 'g3'], ['📅', 'g4'], ['👥', 'g5']];
+  const draw = () => {
+    guideEl.innerHTML = `<div class="box"><div class="gbig">${steps[i][0]}</div><h3>${T(steps[i][1] + 't')}</h3><p>${T(steps[i][1])}</p><div class="dots">${steps.map((s, k) => `<i class="${k === i ? 'on' : ''}"></i>`).join('')}</div><button class="btn pri" data-n>${i === steps.length - 1 ? T('letsplay') : T('next')}</button><button class="btn sm" data-s>${T('skip')}</button></div>`;
+    $('[data-n]', guideEl).onclick = () => { if (++i >= steps.length) endGuide(); else draw(); }; $('[data-s]', guideEl).onclick = endGuide;
+  };
+  guideEl = document.createElement('div'); guideEl.className = 'ov'; guideEl.dataset.nobk = 1; document.body.appendChild(guideEl); overlays.push(guideEl); syncHistory(); draw();
+}
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
+GAME_IDS.forEach(g => { const G0 = Games[g], f = G0.startSolo; G0.startSolo = function (n) { META.last = { g, n }; saveMeta(); return f.call(G0, n); }; });
+
+</script>
+</body>
+</html>
