@@ -22,7 +22,7 @@
 /* SportNest service worker — network-first for pages (never a bare error), cache-first for files */
 const VERSION = 'sportnest-v1';
 const CORE = ['./', 'manifest.json', 'icon-192.png', 'icon-512.png', 'privacy_policy.html'];
-const ART = [];
+const ART = ["art/bg-pen.webp","art/pen-ball.webp","art/pen-dummy.webp","art/pen-keeper.webp","art/tile-pen.webp"];
 const ROOT = new URL('./', self.registration.scope).pathname;
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => Promise.allSettled(CORE.concat(ART).map(u => c.add(u)))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

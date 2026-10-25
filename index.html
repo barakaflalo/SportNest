@@ -165,6 +165,7 @@ input.txt:focus{border-color:var(--acc)}
 :root[data-mode=day] :root[data-mode=day] 
 :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] 
 #play[data-bg=pen]{background:linear-gradient(180deg,#27406a,#2f5d86 40%,#3d8a55)}
+#play[data-bg=hoop]{background:linear-gradient(180deg,#26335a,#3b4f86 45%,#a96d33)}
 .pen-views{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
 .pen-views .pv{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
 .pen-views.duo .pv.top canvas{transform:rotate(180deg)}
@@ -183,7 +184,7 @@ input.txt:focus{border-color:var(--acc)}
 <div id="album" class="sc"></div>
 <div id="about" class="sc"></div>
 <script>
-const ART_FILES = [];
+const ART_FILES = ["bg-pen","pen-ball","pen-dummy","pen-keeper","tile-pen"];
 /* ===== src/nestlink.js ===== */
 /* =====================================================================
    NestLink 1.1 — AppNest online multiplayer module (WebRTC via PeerJS)
@@ -554,6 +555,84 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   }
   const API = { GW, GH, POST, KY0, HRX, HRY, prng, gauss, clamp, flight, sigma, clampShot, clampKeep, diveTime, keeperAt, resolve, botKeep, botShot, tendency, decided, shooterOf, BEST, SKILL, makeLevels, levelState };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Pen = API;
+})(typeof self !== 'undefined' ? self : this);
+
+/* ===== engines/hoop.js ===== */
+/* SportNest — basketball engine (pure, deterministic).
+   A shot = a spot (0 free throw 1pt, 1 mid 2pt, 2 three 3pt), an arc (0 flat / 1 high) and a release power p from a timing meter.
+   The only hidden randomness is a small shaking noise taken from (seed, side, round), so two phones that get the same inputs
+   compute the same result. Trade-offs: far spots pay more but the green zone shrinks; a high arc widens the zone but the meter runs
+   faster; a flat arc can be blocked by a defender. Bots only know their own accuracy (no hidden info exists in this game). */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const VAL = [1, 2, 3], ROUNDS = 6, SUDDEN = 6;
+  const pIdeal = (s, a) => 0.25 + 0.16 * (s + 1) + 0.2 * a;                 // the release power that drops the ball in
+  const TOL = [0.17, 0.06, 0.036], ARCW = 1.2, ARCN = 1.35;                 // far spots shrink the zone; a high arc widens it but speeds up the meter (more release noise)
+  const tol = (s, a) => TOL[s] * (a ? ARCW : 1);                             // half width of the green zone
+  const period = a => a ? 1.0 : 1.4;                                         // seconds for a full up/down of the meter
+  const tri = t => { t = t - Math.floor(t); return t < 0.5 ? t * 2 : 2 - t * 2; };
+  const meterP = (t, a) => 0.2 + 0.8 * tri(t / period(a));
+  const clampShot = x => ({ s: clamp(x.s | 0, 0, 2), a: x.a ? 1 : 0, p: clamp(+x.p || 0.5, 0.2, 1) });
+  const shake = (s, skill) => 0.008 * (0.8 + 0.25 * (s + 1)) / (skill || 1);
+  function resolve(shot, ctx) {
+    const sh = clampShot(shot), R = prng((ctx.seed || 1) * 131 + (ctx.side || 0) * 17 + (ctx.i || 0) * 7 + 3);
+    const rb = R(), rl = R(), L = sh.p - pIdeal(sh.s, sh.a) + gauss(R) * shake(sh.s, ctx.skill), t = tol(sh.s, sh.a), aL = Math.abs(L);
+    let res;
+    if (ctx.def && sh.a === 0 && rb < ctx.def) res = 'blocked';
+    else if (aL <= 0.4 * t) res = 'swish';
+    else if (aL <= t) res = 'in';
+    else if (aL <= 1.3 * t) res = rl < 0.3 ? 'in' : 'rimout';
+    else res = L < 0 ? 'short' : 'long';
+    const made = res === 'swish' || res === 'in';
+    return { res, made, pts: made ? VAL[sh.s] : 0, L, s: sh.s, a: sh.a, T: 0.85 + 0.12 * sh.s + 0.15 * sh.a };
+  }
+  /* ---------- bots ---------- */
+  const SB = [0, 0.13, 0.08, 0.05, 0.03];           // release spread of bot level 1..4
+  const erf = x => { const s = Math.sign(x); x = Math.abs(x); const t = 1 / (1 + 0.3275911 * x); return s * (1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x)); };
+  const pIn = (s, a, sd) => { sd = sd * (a ? ARCN : 1); const t = tol(s, a), sg = Math.sqrt(sd * sd + 0.008 * 0.008 * 1.6), m = erf(t / (sg * Math.SQRT2)), m2 = erf(1.3 * t / (sg * Math.SQRT2)); return m + (m2 - m) * 0.3; };
+  function botPick(lvl, ctx, R) {
+    const allowed = ctx.allowed || [0, 1, 2], sd = SB[lvl], def = ctx.def || 0;
+    if (lvl === 1) return { s: allowed[(R() * allowed.length) | 0], a: R() < 0.5 ? 1 : 0 };
+    if (lvl === 2) { const a2 = allowed.filter(s => s <= 1); const pool = a2.length ? a2 : allowed; return { s: pool[(R() * pool.length) | 0], a: def ? 1 : (R() < 0.5 ? 1 : 0) }; }
+    const sdm = lvl === 3 ? sd * 1.3 : sd; let best = null, bv = -1;
+    for (const s of allowed) for (const a of [0, 1]) { let v = VAL[s] * pIn(s, a, sdm); if (a === 0 && def) v *= 1 - def; if (v > bv + 1e-9) { bv = v; best = { s, a }; } }
+    return best;
+  }
+  function botShot(lvl, ctx, R) { const pk = botPick(lvl, ctx, R); return { s: pk.s, a: pk.a, p: clamp(pIdeal(pk.s, pk.a) + gauss(R) * SB[lvl] * (pk.a ? ARCN : 1), 0.2, 1) }; }
+  const SKILL = [1, 1, 1, 1, 1];
+  /* ---------- match: simultaneous rounds, ROUNDS each then sudden death ---------- */
+  function decided(sc, k) {                            // k = rounds both sides finished; sc = total points per side
+    const lead = sc[0] - sc[1];
+    if (k >= ROUNDS) { if (lead) return lead > 0 ? 0 : 1; return k >= ROUNDS + SUDDEN ? 'draw' : null; }
+    if (Math.abs(lead) > 3 * (ROUNDS - k)) return lead > 0 ? 0 : 1; return null;
+  }
+  /* ---------- solo levels ---------- */
+  const GOALF = [];                                    // goal = round(shots * ev * GOALF) filled below
+  function allowedOf(n) { return n % 6 === 0 ? [2] : n <= 3 ? [0] : n <= 6 ? [0, 1] : [0, 1, 2]; }
+  function defP(n) { return n >= 20 ? [0.6, 0.75] : n >= 14 ? [0.5, 0.7] : n >= 8 ? [0.35, 0.65] : [0, 0]; }
+  function defAt(lv, i) { if (!lv.defP) return 0; const R = prng(lv.seed * 977 + i * 31 + 5); return R() < lv.defP ? lv.block : 0; }
+  function makeLevels() {
+    const out = [];
+    for (let n = 1; n <= 24; n++) {
+      const shots = n <= 6 ? 6 : n <= 12 ? 7 : n <= 18 ? 8 : 9, allowed = allowedOf(n), d = defP(n), world = ((n - 1) / 6) | 0, t = (n - 1) % 6;
+      const per = n % 6 === 0 ? 1.2 + 0.1 * world : allowed.length === 1 ? 0.84 : allowed.length === 2 ? 1.22 : 1.4;      // expected points per shot of a steady proxy player
+      const fr = 0.64 + 0.035 * t + 0.06 * world;
+      const goal = Math.max(2, Math.round(shots * per * fr));
+      out.push({ n, shots, allowed, defP: d[0], block: d[1], goal, g2: Math.round(goal * 1.25) + 1, g3: Math.round(goal * 1.5) + 2, seed: 4000 + n * 17 });
+    }
+    return out;
+  }
+  function levelState(lv, pts, k) {
+    if (pts >= lv.g3) return { done: true, win: true, stars: 3 };
+    if (k >= lv.shots) return pts >= lv.g2 ? { done: true, win: true, stars: 2 } : pts >= lv.goal ? { done: true, win: true, stars: 1 } : { done: true, win: false, stars: 0 };
+    return { done: false };
+  }
+  function defVs(seed, i) { const R = prng(seed * 53 + i * 19 + 11); return R() < 0.4 ? 0.7 : 0; }   // public: both sides face the same defender in a round
+  const API = { defVs, ARCN, ARCW, TOL, VAL, ROUNDS, SUDDEN, prng, gauss, clamp, pIdeal, tol, period, tri, meterP, clampShot, resolve, SB, SKILL, pIn, botPick, botShot, decided, makeLevels, levelState, defAt, allowedOf };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Hoop = API;
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/i18n.js ===== */
@@ -1545,10 +1624,43 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_hoop.js ===== */
+/* SportNest — Basketball strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_hoop: 'כדורסל', d_hoop: 'בוחרים מרחק, טוענים ומשחררים בזמן',
+      hoop_help: 'בחרו מרחק וקשת. החזיקו על המגרש ושחררו כשהסמן בתוך האזור הירוק', hoop_help_two: 'כל שחקן זורק במגרש שלו, בו זמנית', hoop_wait: 'ממתין ליריב…',
+      hoop_swish: 'נקי!', hoop_in: 'בפנים!', hoop_rimout: 'יצא מהטבעת', hoop_short: 'קצר', hoop_long: 'ארוך', hoop_blocked: 'נחסם!',
+      hoop_flat: 'שטוחה', hoop_high: 'גבוהה', hoop_def: 'שחקן הגנה!', hoop_need: 'צריך {n} נקודות', hoop_shot: 'זריקה', hoop_sd: 'הארכה', hoop_pts: '{n} נק׳',
+      ru_hoop: '<p>זורקים לסל. לפני כל זריקה בוחרים מרחק: קרוב שווה נקודה, אמצעי שתיים, רחוק שלוש, וגם קשת שטוחה או גבוהה. מחזיקים אצבע על המגרש והמד עולה ויורד, ומשחררים כשהסמן בתוך האזור הירוק.</p><p>ככל שרחוקים יותר האזור הירוק צר יותר. קשת גבוהה מרחיבה אותו אבל המד רץ מהר יותר, ולכן קשה יותר לשחרר בדיוק. קשת שטוחה יכולה להיחסם כשיש שחקן הגנה, והקשת הגבוהה עוברת מעליו.</p><p>במשחק מול יריב כל אחד זורק במגרש שלו, שש זריקות, והמנצח מי שצבר יותר נקודות. בתיקו ממשיכים בהארכה.</p>' },
+    en: { g_hoop: 'Basketball', d_hoop: 'Pick a spot, charge, release on time',
+      hoop_help: 'Pick a spot and an arc. Hold on the court and release when the marker is inside the green zone', hoop_help_two: 'Each player shoots on their own court, at the same time', hoop_wait: 'Waiting for the opponent…',
+      hoop_swish: 'Swish!', hoop_in: 'In!', hoop_rimout: 'Rimmed out', hoop_short: 'Short', hoop_long: 'Long', hoop_blocked: 'Blocked!',
+      hoop_flat: 'Flat', hoop_high: 'High', hoop_def: 'Defender!', hoop_need: 'Need {n} points', hoop_shot: 'Shot', hoop_sd: 'Overtime', hoop_pts: '{n} pt',
+      ru_hoop: '<p>Shoot at the hoop. Before each shot pick a spot: near is worth one point, middle two, far three, and an arc, flat or high. Hold a finger on the court while the meter goes up and down, and release when the marker is inside the green zone.</p><p>The farther you are, the narrower the green zone. A high arc widens it but the meter runs faster, so it is harder to release precisely. A flat arc can be blocked when a defender is up, and the high arc goes over him.</p><p>In a match each player shoots on their own court, six shots each, and the higher score wins. A tie goes to overtime.</p>' },
+    ru: { g_hoop: 'Баскетбол', d_hoop: 'Выбери точку, зарядись, отпусти вовремя',
+      hoop_help: 'Выберите точку и дугу. Удерживайте на площадке и отпустите, когда маркер в зелёной зоне', hoop_help_two: 'Каждый бросает на своей площадке одновременно', hoop_wait: 'Ждём соперника…',
+      hoop_swish: 'Чисто!', hoop_in: 'Попал!', hoop_rimout: 'Вылетел', hoop_short: 'Недолёт', hoop_long: 'Перелёт', hoop_blocked: 'Блок!',
+      hoop_flat: 'Низкая', hoop_high: 'Высокая', hoop_def: 'Защитник!', hoop_need: 'Нужно очков: {n}', hoop_shot: 'Бросок', hoop_sd: 'Овертайм', hoop_pts: '{n} оч.',
+      ru_hoop: '<p>Бросайте в кольцо. Перед каждым броском выберите точку: близко — одно очко, средняя — два, далеко — три, и дугу: низкую или высокую. Удерживайте палец на площадке, пока шкала ходит вверх-вниз, и отпустите, когда маркер в зелёной зоне.</p><p>Чем дальше, тем уже зелёная зона. Высокая дуга расширяет её, но шкала бежит быстрее, и отпустить точно труднее. Низкую дугу может заблокировать защитник, а высокая летит над ним.</p><p>В матче каждый бросает на своей площадке, по шесть бросков, побеждает набравший больше очков. При ничьей — овертайм.</p>' },
+    es: { g_hoop: 'Baloncesto', d_hoop: 'Elige posición, carga y suelta a tiempo',
+      hoop_help: 'Elige posición y arco. Mantén sobre la pista y suelta cuando el marcador esté en la zona verde', hoop_help_two: 'Cada jugador lanza en su pista, a la vez', hoop_wait: 'Esperando al rival…',
+      hoop_swish: '¡Limpia!', hoop_in: '¡Dentro!', hoop_rimout: 'Rebota fuera', hoop_short: 'Corto', hoop_long: 'Largo', hoop_blocked: '¡Tapón!',
+      hoop_flat: 'Plano', hoop_high: 'Alto', hoop_def: '¡Defensor!', hoop_need: 'Faltan {n} puntos', hoop_shot: 'Tiro', hoop_sd: 'Prórroga', hoop_pts: '{n} pt',
+      ru_hoop: '<p>Lanza a canasta. Antes de cada tiro elige una posición: cerca vale un punto, media dos, lejos tres, y un arco, plano o alto. Mantén el dedo en la pista mientras la barra sube y baja, y suelta cuando el marcador esté en la zona verde.</p><p>Cuanto más lejos, más estrecha es la zona verde. Un arco alto la ensancha, pero la barra corre más rápido y es más difícil soltar con precisión. Un arco plano puede ser taponado si hay un defensor, y el alto pasa por encima.</p><p>En una partida cada jugador lanza en su pista, seis tiros cada uno, y gana quien sume más puntos. Si hay empate, prórroga.</p>' },
+    ar: { g_hoop: 'كرة السلة', d_hoop: 'اختر المكان واشحن وأفلت في الوقت',
+      hoop_help: 'اختر المكان والقوس. اضغط مطولاً على الملعب وأفلت عندما يكون المؤشر داخل المنطقة الخضراء', hoop_help_two: 'كل لاعب يرمي في ملعبه في الوقت نفسه', hoop_wait: 'بانتظار الخصم…',
+      hoop_swish: 'نظيفة!', hoop_in: 'دخلت!', hoop_rimout: 'خرجت من الحلقة', hoop_short: 'قصيرة', hoop_long: 'طويلة', hoop_blocked: 'صدّ!',
+      hoop_flat: 'مسطّح', hoop_high: 'عالٍ', hoop_def: 'مدافع!', hoop_need: 'مطلوب {n} نقاط', hoop_shot: 'رمية', hoop_sd: 'وقت إضافي', hoop_pts: '{n} نقطة',
+      ru_hoop: '<p>ارمِ نحو السلة. قبل كل رمية اختر مكاناً: القريب بنقطة، والمتوسط بنقطتين، والبعيد بثلاث، واختر قوساً مسطحاً أو عالياً. اضغط بإصبعك على الملعب بينما يصعد المقياس وينزل، وأفلت عندما يكون المؤشر داخل المنطقة الخضراء.</p><p>كلما ابتعدت ضاقت المنطقة الخضراء. القوس العالي يوسّعها لكن المقياس يتحرك أسرع فيصعب الإفلات بدقة. القوس المسطح قد يُصدّ إذا وُجد مدافع، والعالي يمرّ فوقه.</p><p>في المباراة يرمي كل لاعب في ملعبه، ست رميات لكل منهما، ويفوز من جمع نقاطاً أكثر. وعند التعادل يُلعب وقت إضافي.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -2104,10 +2216,279 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
 })();
 
+/* ===== src/hoop_ui.js ===== */
+'use strict';
+/* כדורסל — שלבים, מול המחשב, שניים בטלפון (מסך מפוצל), אונליין. המנוע: Hoop.
+   כל סבב: שני הצדדים זורקים בו־זמנית במגרש שלהם. תוצאה = מנוע דטרמיניסטי + (זרע, צד, סבב), לכן שני הטלפונים מגיעים לאותה תוצאה. */
+(function () {
+  const E = Hoop, LV = E.makeLevels();
+  const VW = 10, RIMX = 8.0, RIMY = 4.1, BOARDX = 8.78, SPX = [6.0, 4.0, 1.7], TEAM = ['#4f8be8', '#e8584f'], BALLR = 0.42;
+  const RES_KEY = { swish: 'hoop_swish', in: 'hoop_in', rimout: 'hoop_rimout', short: 'hoop_short', long: 'hoop_long', blocked: 'hoop_blocked' };
+  const G_ = 16;   // gravity of the ball animation (units / s²)
+  let CROWD = null;
+  function crowd() { if (CROWD) return CROWD; const R = E.prng(91), cols = ['#e8584f', '#f0c24b', '#4f8be8', '#59c46a', '#f4efe3', '#b06ad6']; CROWD = []; for (let i = 0; i < 150; i++) CROWD.push({ x: R() * VW, y: 0.1 + R() * 1.6, c: cols[(R() * cols.length) | 0], r: 0.09 + R() * 0.08 }); return CROWD; }
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botLvl = cfg.mode === 'cpu' ? cfg.lv : 0;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0;
+      this.i = 0; this.k = 0; this.sc = [0, 0]; this.log = [[], []]; this.Rb = E.prng(this.seed * 5 + 1); this.oppQ = {};
+      this.state = this.net ? 'count' : 'prep'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.pick = [1, 1]; this.arcPick = [0, 0];
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+      if (this.state === 'prep') this.beginRound();
+    }
+    sides() { return this.mode === 'solo' ? [0] : [0, 1]; }
+    mine() { return this.mode === 'two' ? [0, 1] : this.net ? [this.me] : [0]; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    allowed() { return this.lv ? this.lv.allowed : [0, 1, 2]; }
+    defNow() { return this.lv ? E.defAt(this.lv, this.i) : E.defVs(this.seed, this.i); }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views ${two ? 'duo' : 'one'}">${two ? '<div class="pv top"><canvas></canvas></div>' : ''}<div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center"></div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el);
+      this.views = $$('.pv', el).map(box => { const side = two ? (box.classList.contains('top') ? 1 : 0) : (this.net ? this.me : 0); return { box, cv: $('canvas', box), side, rot: two && side === 1, charging: false, t0: 0, cs: 10, vh: 14, ctx: null, s: 1, a: 0 }; });
+      this.views.forEach(v => this.bindInput(v));
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      this.views.forEach(v => {
+        const r = v.box.getBoundingClientRect(); v.cs = Math.max(8, Math.min((r.width - 2) / VW, (r.height - 2) / 14)); v.vh = Math.max(14, Math.min(17.5, (r.height - 2) / v.cs)); const d = Math.min(window.devicePixelRatio || 1, 2), w = VW * v.cs, h = v.vh * v.cs;
+        v.cv.width = Math.round(w * d); v.cv.height = Math.round(h * d); v.cv.style.width = w + 'px'; v.cv.style.height = h + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+      });
+    }
+    fy(v) { return v.vh - 4.1; }
+    chips(v) {   // hit boxes in view units: three spot chips, then two arc chips
+      const y1 = v.vh - 3.35, y2 = v.vh - 2.0, out = [];
+      for (let s = 0; s < 3; s++) out.push({ k: 's', v: s, x: 0.35 + s * 3.15, y: y1, w: 3.0, h: 1.2 });
+      for (let a = 0; a < 2; a++) out.push({ k: 'a', v: a, x: 0.35 + a * 4.8, y: y2, w: 4.5, h: 1.1 });
+      return out;
+    }
+    /* ---------- input ---------- */
+    local(v, e) { const r = v.cv.getBoundingClientRect(); let x = e.clientX - r.left, y = e.clientY - r.top; if (v.rot) { x = r.width - x; y = r.height - y; } return { x: x / v.cs, y: y / v.cs }; }
+    canAct(v) { return this.state === 'prep' && !this.paused && this.mine().includes(v.side) && !this.done[v.side]; }
+    bindInput(v) {
+      v.cv.addEventListener('pointerdown', e => {
+        e.preventDefault(); if (!this.canAct(v)) return; const p = this.local(v, e), hit = this.chips(v).find(c => p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h);
+        if (hit) { if (hit.k === 's') { if (this.allowed().includes(hit.v)) { v.s = hit.v; this.pick[v.side] = hit.v; SFX.tap(); } } else { v.a = hit.v; this.arcPick[v.side] = hit.v; SFX.tap(); } return; }
+        try { v.cv.setPointerCapture(e.pointerId); } catch (x) {} v.charging = true; v.t0 = performance.now(); SFX.tap();
+      });
+      const up = () => { if (!v.charging) return; v.charging = false; if (!this.canAct(v)) return; this.shoot(v.side, { s: v.s, a: v.a, p: E.meterP((performance.now() - v.t0) / 1000, v.a) }); };
+      v.cv.addEventListener('pointerup', up); v.cv.addEventListener('pointercancel', () => { v.charging = false; }); v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    /* ---------- round flow ---------- */
+    beginRound() {
+      this.state = 'prep'; this.done = [false, false]; this.applied = [false, false]; this.an = [null, null]; this.resT = 0; this.def = this.defNow();
+      this.views.forEach(v => { v.charging = false; if (!this.allowed().includes(v.s)) v.s = this.allowed()[0]; if (this.allowed().length === 1) v.s = this.allowed()[0]; });
+      if (this.mode === 'cpu') this.botIn = 1.3 + this.Rb() * 1.8; else this.botIn = null;
+      this.autoIn = this.net ? 15 : null;
+      if (this.sides().length === 1) this.done[1] = true, this.applied[1] = true;
+      this.msg.textContent = this.mode === 'two' ? T('hoop_help_two') : T('hoop_help');
+      const q = this.oppQ[this.i]; if (q) { delete this.oppQ[this.i]; this.onMessage(q); }
+    }
+    shoot(side, shot) {
+      if (this.state !== 'prep' || this.done[side] || !this.mine().includes(side)) return;   // only your own side may shoot
+      const sh = E.clampShot(shot), ok = this.allowed(); if (!ok.includes(sh.s)) sh.s = ok[0];
+      this.take(side, sh); if (this.net) Net.link.send({ type: 'shot', i: this.i, s: sh.s, a: sh.a, p: sh.p }); this.msg.textContent = this.net ? T('hoop_wait') : ''; SFX.tap();
+    }
+    take(side, sh) {
+      const out = E.resolve(sh, { seed: this.seed, side, i: this.i, skill: 1, def: this.def }); this.done[side] = true; this.an[side] = { t: 0, out, sh };
+    }
+    botFire() { if (this.done[1]) return; const sh = E.botShot(this.botLvl, { allowed: this.allowed(), def: this.def }, this.Rb); this.take(1, sh); }
+    applyPts(side) {
+      const a = this.an[side], o = a.out; this.applied[side] = true; this.sc[side] += o.pts; this.log[side].push(o.made ? 1 : 0);
+      if (side === (this.net ? this.me : 0) || this.mode === 'two') { if (o.made) { SFX.win(); vib(30); } else if (o.res === 'blocked') { SFX.lock(); vib(25); } else SFX.lose(); }
+    }
+    advance() {
+      this.k++; let end = null;
+      if (this.mode === 'solo') { const st = E.levelState(this.lv, this.sc[0], this.k); if (st.done) end = st; } else { const d = E.decided(this.sc, this.k); if (d !== null) end = { res: d }; }
+      if (end) { this.state = 'end'; setTimeout(() => this.finish(end), 300); return; }
+      this.i++; this.beginRound();
+    }
+    onMessage(m) {
+      if (m.type === 'shot') {
+        const opp = 1 - this.me;
+        if (m.i === this.i && this.state === 'prep' && !this.done[opp]) this.take(opp, E.clampShot(m));
+        else if (m.i > this.i && this.state !== 'end' && this.state !== 'fin') this.oppQ[m.i] = m;
+      } else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('hoop'); let html = '', btns = '';
+      if (m === 'solo') {
+        const win = !!end.win, n = this.lv.n;
+        if (win) { if (end.stars > (st.lv[n] || 0)) st.lv[n] = end.stars; st.games++; st.wins++; saveP(); Meta.after('hoop', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(end.stars)}${'☆'.repeat(3 - end.stars)}</div><p>🏀 ${this.sc[0]}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('hoop', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>🏀 ${this.sc[0]}/${this.lv.goal}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (r === 'draw') title = T('draw'); else if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('hoop', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('hoop', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>🏀 ${this.sc[0]} : ${this.sc[1]}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; this.paused = true; const online = this.net;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      if (!this.paused) {
+        if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.beginRound(); SFX.go(); } }
+        else if (this.state === 'prep' || this.state === 'res') {
+          if (this.state === 'prep') {
+            if (this.botIn != null) { this.botIn -= dt; if (this.botIn <= 0) { this.botIn = null; this.botFire(); } }
+            if (this.autoIn != null && !this.done[this.me]) { this.autoIn -= dt; if (this.autoIn <= 0) { this.autoIn = null; const v = this.views[0]; this.shoot(this.me, { s: v.s, a: v.a, p: 0.5 }); } }
+          }
+          this.sides().forEach(s => { const a = this.an[s]; if (!a) return; a.t += dt; if (!this.applied[s] && a.t >= a.out.T) this.applyPts(s); });
+          if (this.state === 'prep' && this.sides().every(s => this.done[s])) { this.state = 'res'; this.msg.textContent = ''; }
+          if (this.state === 'res') { if (this.sides().every(s => this.applied[s])) { this.resT += dt; if (this.resT > 1.35) this.advance(); } }
+        }
+      }
+      this.t += dt; this.draw(); this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    /* ---------- drawing ---------- */
+    draw() { this.views.forEach(v => { if (v.ctx) this.drawView(v); }); this.stat(); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return;
+      if (this.mode === 'solo') st.innerHTML = `<span>🏀 ${this.sc[0]}/${this.lv.goal}<small>${T('hoop_need', { n: this.lv.goal })}</small></span><span>${Math.min(this.k + 1, this.lv.shots)}/${this.lv.shots}<small>${T('hoop_shot')}</small></span><span>${this.def ? '🛡' : '·'}<small>${this.def ? T('hoop_def') : ' '}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">🏀 ${this.sc[0]}<small>${esc(this.nameOf(0))}</small></span><span>${this.i >= E.ROUNDS ? T('hoop_sd') : (this.i + 1) + '/' + E.ROUNDS}<small>${T('hoop_shot')}</small></span><span style="color:${TEAM[1]}">🏀 ${this.sc[1]}<small>${esc(this.nameOf(1))}</small></span>`;
+    }
+    // each dot carries a ✓ or ✗ so a result never depends on color alone
+    dots(c, x, y, arr, total, r) { for (let k = 0; k < total; k++) { const cx = x + k * r * 2.7; c.beginPath(); c.arc(cx, y, r, 0, 7); if (k < arr.length) { c.fillStyle = arr[k] ? '#59d28a' : '#ff6b6b'; c.fill(); c.strokeStyle = '#10221a'; c.lineWidth = r * 0.3; c.lineCap = 'round'; c.beginPath(); if (arr[k]) { c.moveTo(cx - r * 0.45, y); c.lineTo(cx - r * 0.1, y + r * 0.38); c.lineTo(cx + r * 0.5, y - r * 0.35); } else { c.moveTo(cx - r * 0.38, y - r * 0.38); c.lineTo(cx + r * 0.38, y + r * 0.38); c.moveTo(cx + r * 0.38, y - r * 0.38); c.lineTo(cx - r * 0.38, y + r * 0.38); } c.stroke(); } else { c.strokeStyle = 'rgba(255,255,255,.6)'; c.lineWidth = r * 0.28; c.stroke(); } } }
+    meterY(v, p) { const y0 = this.fy(v) - 0.3, y1 = 2.2; return y0 - (p - 0.2) / 0.8 * (y0 - y1); }
+    ballAt(v, a) {   // position of a ball for the animation record a = {t, out, sh}; returns {x,y,r,rot,alpha}
+      const o = a.out, sh = a.sh, sx = SPX[o.s], fy = this.fy(v), rx = sx + 0.5, ry = fy - 2.5, t = E.tol(o.s, o.a), q = a.t, T0 = o.T;
+      const m = Math.max(-2.2, Math.min(2.2, o.L / t)), off = Math.abs(m) <= 1 ? m * 0.42 : Math.sign(m) * (0.42 + (Math.abs(m) - 1) * 1.7), tx = RIMX + off, H = 1.1 + 1.9 * o.a + 0.12 * o.s;
+      const pos = u => ({ x: rx + (tx - rx) * u, y: ry + (RIMY - ry) * u - 4 * H * u * (1 - u) });
+      const vx = (tx - rx) / T0, vy = ((RIMY - ry) + 4 * H) / T0;
+      let x, y, rot = q * 9, al = 1, r = BALLR;
+      if (o.res === 'blocked') { const qb = T0 * 0.16, b = pos(0.16); if (q < qb) { const p = pos(q / T0); x = p.x; y = p.y; } else { const d = q - qb; x = b.x - 2.6 * d; y = b.y - 1.8 * d + 0.5 * G_ * d * d; if (y > fy - 0.2) { y = fy - 0.2; al = Math.max(0, 1 - (d - 0.6)); } rot = d * 12; } return { x, y, r, rot, alpha: al }; }
+      if (q <= T0) { const p = pos(q / T0); return { x: p.x, y: p.y, r, rot, alpha: 1 }; }
+      const d = q - T0;
+      if (o.res === 'swish') { x = tx * 0.97 + RIMX * 0.03; y = RIMY + 0.9 * d + 0.5 * G_ * d * d * 0.55; if (y > fy - 0.2) { y = fy - 0.2 - Math.abs(Math.sin((y - fy) * 0.6)) * 0.2; al = Math.max(0, 1 - (d - 0.7) * 2.2); } }
+      else if (o.res === 'in') { const w = Math.exp(-d * 3.2); x = tx + 0.32 * Math.sin(d * 22) * w * (Math.sign(m) || 1); y = RIMY + (d < 0.35 ? 0.2 * Math.sin(d * 9) : 0.2 * Math.sin(0.35 * 9) + 0.6 * (d - 0.35) + 0.5 * G_ * (d - 0.35) * (d - 0.35) * 0.55); if (y > fy - 0.2) { y = fy - 0.2; al = Math.max(0, 1 - (d - 1.0) * 2); } }
+      else if (o.res === 'rimout') { const dir = Math.sign(m) || 1; x = tx + dir * 2.0 * d; y = RIMY - 3.0 * d + 0.5 * G_ * d * d; if (y > fy - 0.2) { y = fy - 0.2; al = Math.max(0, 1 - (d - 1.1) * 2); } rot = q * 14; }
+      else { x = tx + vx * d; y = RIMY + vy * d + 0.5 * G_ * d * d; if (o.res === 'long' && x > BOARDX - 0.3) x = BOARDX - 0.3 - (x - (BOARDX - 0.3)) * 0.45; if (y > fy - 0.2) { y = fy - 0.2; al = Math.max(0, 1 - (d - 0.9) * 2); } }
+      return { x, y, r, rot, alpha: al };
+    }
+    drawView(v) {
+      const c = v.ctx, cs = v.cs, vh = v.vh, X = x => x * cs, Y = y => y * cs, fy = this.fy(v), now = performance.now(), bgA = Art.get('bg-hoop'), side = v.side, a = this.an && this.an[side], role = this.mine().includes(side);
+      c.clearRect(0, 0, VW * cs, vh * cs); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, VW * cs, vh * cs, 14); c.clip();
+      if (bgA) c.drawImage(bgA, 0, 0, VW * cs, vh * cs);
+      else {
+        const wl = c.createLinearGradient(0, 0, 0, Y(fy)); wl.addColorStop(0, '#26335a'); wl.addColorStop(1, '#3b4f86'); c.fillStyle = wl; c.fillRect(0, 0, X(VW), Y(fy));
+        crowd().forEach(d => { c.fillStyle = d.c; c.globalAlpha = 0.8; c.beginPath(); c.arc(X(d.x), Y(d.y), d.r * cs, 0, 7); c.fill(); }); c.globalAlpha = 1;
+        const fl = c.createLinearGradient(0, Y(fy), 0, Y(vh)); fl.addColorStop(0, '#c98c4b'); fl.addColorStop(1, '#a96d33'); c.fillStyle = fl; c.fillRect(0, Y(fy), X(VW), Y(vh - fy));
+        c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = cs * 0.06; c.beginPath(); c.moveTo(0, Y(fy)); c.lineTo(X(VW), Y(fy)); c.stroke();
+      }
+      this.drawBoard(c, cs, v);
+      // hoop: pole, board, back rim, net, front rim (the ball is drawn between back and front)
+      c.fillStyle = '#7b8190'; c.fillRect(X(BOARDX + 0.55), Y(2.6), X(0.28), Y(fy - 2.6));
+      c.fillStyle = '#f4f4f4'; c.strokeStyle = '#2a2f3a'; c.lineWidth = cs * 0.06; c.beginPath(); c.roundRect(X(BOARDX), Y(2.3), X(0.28), Y(2.5), cs * 0.08); c.fill(); c.stroke(); c.strokeStyle = '#e8584f'; c.lineWidth = cs * 0.05; c.strokeRect(X(BOARDX - 0.0), Y(3.45), X(0.28), Y(0.8));
+      this.drawShooter(c, cs, v, a); if (this.def && this.state !== 'count' && a !== undefined) this.drawDef(c, cs, v, a);
+      // back of the rim
+      c.strokeStyle = '#a63c1a'; c.lineWidth = cs * 0.13; c.lineCap = 'round'; c.beginPath(); c.moveTo(X(RIMX - 0.62), Y(RIMY)); c.lineTo(X(RIMX + 0.62), Y(RIMY)); c.stroke();
+      if (a) { const b = this.ballAt(v, a); this.drawBall(c, cs, b, 'hoop-ball'); }
+      else if (this.state !== 'count') { const sx = SPX[v.s], ph = v.charging ? 0 : Math.sin(this.t * 3) * 0.04; this.drawBall(c, cs, { x: sx + 0.5, y: fy - 2.5 + ph, r: BALLR, rot: 0, alpha: 1 }, 'hoop-ball'); }
+      // net + front rim
+      const swing = a && a.out && (a.out.made) && a.t > a.out.T ? Math.min(1, (a.t - a.out.T) * 3) * Math.exp(-(a.t - a.out.T) * 2.5) : 0;
+      c.strokeStyle = 'rgba(255,255,255,.8)'; c.lineWidth = cs * 0.035; for (let k = 0; k <= 5; k++) { const f = k / 5, tx = RIMX - 0.58 + f * 1.16, bx = RIMX - 0.3 + f * 0.6 + swing * 0.12; c.beginPath(); c.moveTo(X(tx), Y(RIMY)); c.lineTo(X(bx), Y(RIMY + 0.95 + swing * 0.25)); c.stroke(); }
+      for (let k = 1; k <= 3; k++) { const f = k / 3.4, y = RIMY + 0.95 * f, w = 0.58 - 0.28 * f; c.beginPath(); c.moveTo(X(RIMX - w + swing * 0.1 * f), Y(y)); c.lineTo(X(RIMX + w + swing * 0.1 * f), Y(y + 0.05)); c.stroke(); }
+      c.strokeStyle = '#e8651f'; c.lineWidth = cs * 0.13; c.beginPath(); c.moveTo(X(RIMX - 0.62), Y(RIMY)); c.lineTo(X(RIMX - 0.1), Y(RIMY + 0.05)); c.stroke();
+      // controls for this view
+      if (role && this.state !== 'count') this.drawControls(c, cs, v);
+      // result banner
+      if (a && a.t >= a.out.T && (role)) { const k = Math.min(1, a.t - a.out.T + 0.2); c.save(); c.globalAlpha = Math.min(1, k * 3); c.font = `900 ${cs * 1.5}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.22; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.65)'; c.fillStyle = a.out.made ? '#6dffa0' : '#ffd877'; const tx = T(RES_KEY[a.out.res]), yy = Y(7.2 - Math.min(0.5, k * 0.5)); c.strokeText(tx, X(4.6), yy); c.fillText(tx, X(4.6), yy); if (a.out.made) { c.font = `900 ${cs * 1.2}px system-ui`; c.strokeText('+' + a.out.pts, X(4.6), yy + cs * 1.4); c.fillText('+' + a.out.pts, X(4.6), yy + cs * 1.4); } c.restore(); }
+      c.restore();
+    }
+    drawBoard(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, two = this.mode === 'two'; c.fillStyle = 'rgba(8,14,24,.78)'; c.beginPath(); c.roundRect(X(1.0), Y(0.12), X(8.0), Y(1.2), cs * 0.25); c.fill(); c.textBaseline = 'middle'; c.fillStyle = '#fff';
+      if (this.mode === 'solo') { c.textAlign = 'center'; const n = this.lv.shots; this.dots(c, X(5) - (n - 1) * cs * 0.25 * 2.7 / 2 * 1, Y(0.62), this.log[0], n, cs * 0.25); c.font = `700 ${cs * 0.42}px system-ui`; c.fillStyle = '#ffd877'; c.fillText('🏀 ' + this.sc[0] + ' / ' + this.lv.goal, X(5), Y(1.03)); }
+      else { const order = two ? [v.side, 1 - v.side] : [0, 1], tot = E.ROUNDS, r = cs * 0.2; order.forEach((s, row) => { const y = Y(0.42 + row * 0.52); c.textAlign = 'left'; c.fillStyle = TEAM[s]; c.font = `800 ${cs * 0.38}px system-ui`; c.fillText(this.nameOf(s).slice(0, 7), X(1.25), y); this.dots(c, X(3.9), y, this.log[s], Math.max(tot, this.log[s].length), Math.min(r, cs * 3.9 / Math.max(tot, this.log[s].length) / 2.7)); c.textAlign = 'right'; c.fillStyle = '#fff'; c.fillText(this.sc[s], X(8.8), y); }); }
+    }
+    drawShooter(c, cs, v, a) {
+      const X = x => x * cs, Y = y => y * cs, fy = this.fy(v), s = a ? a.out.s : v.s, sx = SPX[s], art = Art.get('hoop-player'), col = TEAM[v.side];
+      // floor marks
+      [0, 1, 2].forEach(k => { const ok = this.allowed().includes(k); c.fillStyle = k === s ? 'rgba(255,216,119,.55)' : 'rgba(255,255,255,' + (ok ? '.22' : '.08') + ')'; c.beginPath(); c.ellipse(X(SPX[k]), Y(fy + 0.05), cs * 0.75, cs * 0.18, 0, 0, 7); c.fill(); });
+      let jump = 0; if (a) { const ph = Math.min(1, a.t / 0.5); jump = Math.sin(Math.PI * ph) * 0.35; }
+      if (art) { c.drawImage(art, X(sx - 1.0), Y(fy - 2.75 - jump), X(2.0), Y(2.8)); return; }
+      c.save(); c.translate(X(sx), Y(fy - jump)); c.fillStyle = col; c.beginPath(); c.roundRect(-cs * 0.5, -cs * 1.7, cs * 1.0, cs * 1.35, cs * 0.3); c.fill(); c.fillStyle = '#f7d08a'; c.beginPath(); c.arc(0, -cs * 2.1, cs * 0.42, 0, 7); c.fill(); c.strokeStyle = col; c.lineWidth = cs * 0.24; c.lineCap = 'round'; c.beginPath(); c.moveTo(cs * 0.35, -cs * 1.5); c.lineTo(cs * 0.75, -cs * 2.3); c.moveTo(-cs * 0.35, -cs * 1.5); c.lineTo(-cs * 0.7, -cs * 1.0); c.stroke(); c.beginPath(); c.moveTo(-cs * 0.2, -cs * 0.4); c.lineTo(-cs * 0.25, 0); c.moveTo(cs * 0.2, -cs * 0.4); c.lineTo(cs * 0.25, 0); c.stroke(); c.fillStyle = '#fff'; [-1, 1].forEach(sg => { c.beginPath(); c.arc(sg * cs * 0.17 + cs * 0.06, -cs * 2.12, cs * 0.09, 0, 7); c.fill(); }); c.fillStyle = '#222'; [-1, 1].forEach(sg => { c.beginPath(); c.arc(sg * cs * 0.17 + cs * 0.1, -cs * 2.12, cs * 0.045, 0, 7); c.fill(); }); c.restore();
+    }
+    drawDef(c, cs, v, a) {
+      const X = x => x * cs, Y = y => y * cs, fy = this.fy(v), s = a ? a.out.s : v.s, dx = SPX[s] + 1.25, art = Art.get('hoop-def'), blocked = a && a.out.res === 'blocked', arms = blocked ? 1 : 0.8 + Math.sin(this.t * 6) * 0.1;
+      if (art) { c.drawImage(art, X(dx - 1.0), Y(fy - 3.6), X(2.0), Y(3.65)); return; }
+      c.save(); c.translate(X(dx), Y(fy)); c.fillStyle = '#e8584f'; c.beginPath(); c.roundRect(-cs * 0.5, -cs * 1.8, cs * 1.0, cs * 1.45, cs * 0.3); c.fill(); c.fillStyle = '#d9a066'; c.beginPath(); c.arc(0, -cs * 2.25, cs * 0.45, 0, 7); c.fill(); c.strokeStyle = '#e8584f'; c.lineWidth = cs * 0.26; c.lineCap = 'round'; c.beginPath(); c.moveTo(-cs * 0.4, -cs * 1.6); c.lineTo(-cs * 0.55, -cs * (2.0 + arms * 1.4)); c.moveTo(cs * 0.4, -cs * 1.6); c.lineTo(cs * 0.25, -cs * (2.2 + arms * 1.3)); c.stroke(); c.beginPath(); c.moveTo(-cs * 0.2, -cs * 0.4); c.lineTo(-cs * 0.25, 0); c.moveTo(cs * 0.2, -cs * 0.4); c.lineTo(cs * 0.25, 0); c.stroke(); c.fillStyle = '#fff'; [-1, 1].forEach(sg => { c.beginPath(); c.arc(sg * cs * 0.17 - cs * 0.06, -cs * 2.27, cs * 0.09, 0, 7); c.fill(); }); c.restore();
+    }
+    drawBall(c, cs, b, art) {
+      const X = x => x * cs, Y = y => y * cs, im = Art.get(art); c.save(); c.globalAlpha = b.alpha; c.translate(X(b.x), Y(b.y)); c.rotate(b.rot); const R = b.r * cs;
+      if (im) c.drawImage(im, -R, -R, 2 * R, 2 * R);
+      else { c.fillStyle = '#ee7b2d'; c.beginPath(); c.arc(0, 0, R, 0, 7); c.fill(); c.strokeStyle = '#5b2a0e'; c.lineWidth = Math.max(1, R * 0.1); c.stroke(); c.beginPath(); c.moveTo(-R, 0); c.lineTo(R, 0); c.moveTo(0, -R); c.lineTo(0, R); c.stroke(); c.beginPath(); c.arc(-R * 1.05, 0, R * 0.8, -1.1, 1.1); c.stroke(); c.beginPath(); c.arc(R * 1.05, 0, R * 0.8, Math.PI - 1.1, Math.PI + 1.1); c.stroke(); }
+      c.restore();
+    }
+    drawControls(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, fy = this.fy(v), can = this.canAct(v), ok = this.allowed(), s = v.s, a = v.a;
+      // timing meter on the left
+      if (can || v.charging) {
+        const y0 = this.meterY(v, 0.2), y1 = this.meterY(v, 1), mx = 0.35, mw = 0.62; c.fillStyle = 'rgba(0,0,0,.45)'; c.beginPath(); c.roundRect(X(mx), Y(y1), X(mw), Y(y0 - y1), cs * 0.3); c.fill();
+        const pi = E.pIdeal(s, a), tl = E.tol(s, a), za = this.meterY(v, pi + tl), zb = this.meterY(v, pi - tl); c.fillStyle = '#59d28a'; c.fillRect(X(mx), Y(za), X(mw), Y(zb - za)); c.strokeStyle = '#10221a'; c.lineWidth = cs * 0.04; c.strokeRect(X(mx), Y(za), X(mw), Y(zb - za));
+        c.fillStyle = '#10221a'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.font = `800 ${cs * 0.4}px system-ui`; if (zb - za > 0.7) c.fillText('✓', X(mx + mw / 2), Y((za + zb) / 2));
+        if (v.charging) { const p = E.meterP((performance.now() - v.t0) / 1000, a), my = this.meterY(v, p); c.fillStyle = '#fff'; c.strokeStyle = '#000'; c.lineWidth = cs * 0.05; c.beginPath(); c.moveTo(X(mx - 0.12), Y(my) - cs * 0.22); c.lineTo(X(mx + mw + 0.12), Y(my)); c.lineTo(X(mx - 0.12), Y(my) + cs * 0.22); c.closePath(); c.fill(); c.stroke(); c.fillRect(X(mx), Y(my) - cs * 0.04, X(mw), cs * 0.08); }
+      }
+      // chips
+      this.chips(v).forEach(h => { const on = h.k === 's' ? h.v === s : h.v === a, dis = h.k === 's' && !ok.includes(h.v), x = X(h.x), y = Y(h.y), w = X(h.w), hh = Y(h.h);
+        c.fillStyle = dis ? 'rgba(255,255,255,.06)' : on ? '#ffd877' : 'rgba(255,255,255,.14)'; c.strokeStyle = on ? '#fff' : 'rgba(255,255,255,.3)'; c.lineWidth = cs * 0.05; c.beginPath(); c.roundRect(x, y, w, hh, cs * 0.3); c.fill(); c.stroke();
+        c.fillStyle = dis ? 'rgba(255,255,255,.3)' : on ? '#1b1b1f' : '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.font = `800 ${cs * 0.52}px system-ui`;
+        let txt = h.k === 's' ? T('hoop_pts', { n: E.VAL[h.v] }) : (h.v ? '⤴ ' + T('hoop_high') : '→ ' + T('hoop_flat') + (this.def ? ' 🛡' : '')); c.fillText(txt, x + w / 2, y + hh / 2); });
+      if (can && !v.charging && !this.an[v.side]) { c.fillStyle = 'rgba(255,255,255,.85)'; c.font = `700 ${cs * 0.45}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('☝', X(4.9), Y(fy - 4.2)); }
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'hoop'; setPlayBg('hoop'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.hoop = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#3b4f86"/><rect y="48" width="90" height="22" fill="#c98c4b"/><rect x="58" y="10" width="5" height="40" fill="#8a90a0"/><rect x="52" y="8" width="16" height="18" rx="2" fill="#f4f4f4"/><ellipse cx="50" cy="28" rx="9" ry="2.4" fill="none" stroke="#e8651f" stroke-width="2.4"/><circle cx="26" cy="38" r="7" fill="#ee7b2d" stroke="#5b2a0e" stroke-width="1.5"/><path d="M26 38 C32 14 42 14 48 27" stroke="#ffd877" stroke-width="2" stroke-dasharray="3 3" fill="none"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'hoop', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen'], GICON = { pen: '⚽' };
+const GAME_IDS = ['pen', 'hoop'], GICON = { pen: '⚽', hoop: '🏀' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
