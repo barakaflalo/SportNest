@@ -167,6 +167,7 @@ input.txt:focus{border-color:var(--acc)}
 #play[data-bg=pen]{background:linear-gradient(180deg,#27406a,#2f5d86 40%,#3d8a55)}
 #play[data-bg=hoop]{background:linear-gradient(180deg,#26335a,#3b4f86 45%,#a96d33)}
 #play[data-bg=dart]{background:linear-gradient(180deg,#2a1f33,#3a2a46 50%,#25303f)}
+#play[data-bg=box]{background:linear-gradient(180deg,#1b1f33,#3a3350 50%,#34406a)}
 .pen-views{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
 .pen-views .pv{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
 .pen-views.duo .pv.top canvas{transform:rotate(180deg)}
@@ -185,7 +186,7 @@ input.txt:focus{border-color:var(--acc)}
 <div id="album" class="sc"></div>
 <div id="about" class="sc"></div>
 <script>
-const ART_FILES = ["bg-pen","pen-ball","pen-dummy","pen-keeper","tile-pen"];
+const ART_FILES = ["bg-dart","bg-hoop","bg-pen","dart-dart","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","tile-dart","tile-hoop","tile-pen"];
 /* ===== src/nestlink.js ===== */
 /* =====================================================================
    NestLink 1.1 — AppNest online multiplayer module (WebRTC via PeerJS)
@@ -727,6 +728,86 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   }
   const API = { ORDER, RB, ROB, T0, T1, D0, D1, ROUNDS, PER, SUDDEN, prng, gauss, clamp, hit, score, amp, sway, phases, land, clampAim, botHold, bestAim, botDart, TAU, throwerOf, roundOf, decided, makeLevels, levelState, RULES, EV3, NOISE };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Dart = API;
+})(typeof self !== 'undefined' ? self : this);
+
+/* ===== engines/box.js ===== */
+/* SportNest — robot boxing engine (pure, deterministic, no hidden randomness).
+   Each beat both fighters secretly pick one action at the same time: Jab, Hook, Uppercut, Block or Dodge. The result of a beat is a pure
+   function of the two actions and the two energies, so two phones that exchange the choices compute exactly the same fight.
+   Energy and health are public. Bots read only public history (the opponent's earlier, already revealed actions). */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const ACTS = ['J', 'H', 'U', 'B', 'D'], IDX = { J: 0, H: 1, U: 2, B: 3, D: 4 };
+  const COST = { J: 1, H: 2, U: 3, B: 0, D: 1 }, MAXE = 6, E0 = 5, HP0 = 100, MAXB = 24, SUDDEN = 8;
+  // DMG[x][y] = damage that x deals when the opponent picks y. Each action beats two others and loses to two (a regular tournament):
+  //   J beats H, D   H beats B, U   U beats J, B   B beats J, D   D beats H, U
+  const DMG = {
+    J: { J: 8, H: 8, U: 7, B: 0, D: 5 },
+    H: { J: 3, H: 14, U: 14, B: 7, D: 0 },
+    U: { J: 12, H: 9, U: 24, B: 8, D: 0 },
+    B: { J: 5, H: 2, U: 3, B: 0, D: 5 },
+    D: { J: 0, H: 5, U: 5, B: 0, D: 0 }
+  };
+  const afford = (e, a) => e >= COST[a];
+  const legal = (e, a) => ACTS.includes(a) && afford(e, a) ? a : 'B';        // an unaffordable choice turns into a block
+  const regen = a => (a === 'B' ? 2 : 1);
+  const newFight = (hp1) => ({ hp: [HP0, hp1 || HP0], en: [E0, E0], beat: 0, hist: [[], []] });
+  function step(f, a0, a1) {
+    a0 = legal(f.en[0], a0); a1 = legal(f.en[1], a1);
+    const d1 = DMG[a0][a1], d0 = DMG[a1][a0];       // d1: damage to fighter 1 from fighter 0
+    f.hp[1] = Math.max(0, f.hp[1] - d1); f.hp[0] = Math.max(0, f.hp[0] - d0);
+    f.en[0] = clamp(f.en[0] - COST[a0] + regen(a0), 0, MAXE); f.en[1] = clamp(f.en[1] - COST[a1] + regen(a1), 0, MAXE);
+    f.hist[0].push(a0); f.hist[1].push(a1); f.beat++;
+    return { a: [a0, a1], dmg: [d0, d1] };       // dmg[i] = damage fighter i took
+  }
+  function decided(f) {
+    if (f.hp[0] <= 0 || f.hp[1] <= 0) { if (f.hp[0] === f.hp[1]) return 'draw'; return f.hp[0] > f.hp[1] ? 0 : 1; }
+    if (f.beat >= MAXB) { if (f.hp[0] !== f.hp[1]) return f.hp[0] > f.hp[1] ? 0 : 1; if (f.beat >= MAXB + SUDDEN) return 'draw'; }
+    return null;
+  }
+  /* ---------- bots: public information only ---------- */
+  const WEIGHTS = { J: 3, H: 2, U: 1, B: 2, D: 1 };
+  function pick(R, w, e) { let tot = 0; for (const a of ACTS) if (afford(e, a)) tot += w[a]; let r = R() * tot; for (const a of ACTS) { if (!afford(e, a)) continue; r -= w[a]; if (r <= 0) return a; } return 'B'; }
+  function predict(hist, kind) {                 // distribution of the opponent's next action, from what is already public
+    const p = { J: 0.4, H: 0.4, U: 0.4, B: 0.4, D: 0.4 }, n = hist.length;       // light prior
+    if (kind === 1 || n < 3) { const from = Math.max(0, n - 7); for (let k = from; k < n; k++) p[hist[k]] += 1 + (k - from) * 0.15; }
+    else { const last = hist[n - 1]; for (let k = 1; k < n; k++) if (hist[k - 1] === last) p[hist[k]] += 2; for (let k = Math.max(0, n - 5); k < n; k++) p[hist[k]] += 0.6; }
+    let s = 0; for (const a of ACTS) s += p[a]; for (const a of ACTS) p[a] /= s; return p;
+  }
+  function value(a, q, myE, oppE, myHp, oppHp) {   // expected damage balance of picking a if the opponent follows q
+    let v = 0; for (const b of ACTS) v += q[b] * (DMG[a][b] - DMG[b][a] * 1.05);
+    v -= COST[a] * 0.7 - (a === 'B' ? 1.0 : 0.3); return v;
+  }
+  function bot(lvl, c, R) {                       // c: {me, en:[,], hp:[,], hist:[[],[]], beat, script}
+    const me = c.me, op = 1 - me, e = c.en[me], oe = c.en[op];
+    if (lvl === 0) { const s = c.script || ['J', 'B']; return legal(e, s[c.beat % s.length]); }
+    if (lvl === 1) return pick(R, WEIGHTS, e);
+    if (lvl === 2) { if (R() < 0.3) return pick(R, WEIGHTS, e); const tot = 9, q = {}; for (const b of ACTS) q[b] = WEIGHTS[b] / tot; let best = 'B', bv = -1e9; for (const a of ACTS) { if (!afford(e, a)) continue; const v = value(a, q, e, oe, c.hp[me], c.hp[op]) + R() * 1.6; if (v > bv) { bv = v; best = a; } } return best; }
+    const q = predict(c.hist[op], lvl === 3 ? 1 : 2);
+    // the opponent cannot pick what it cannot afford (energy is public)
+    let s = 0; for (const b of ACTS) { if (!afford(oe, b)) q[b] = 0; s += q[b]; } for (const b of ACTS) q[b] /= s || 1;
+    let best = 'B', bv = -1e9; const eps = lvl === 3 ? 0.22 : 0.09;
+    if (R() < eps) return pick(R, WEIGHTS, e);
+    for (const a of ACTS) { if (!afford(e, a)) continue; const v = value(a, q, e, oe, c.hp[me], c.hp[op]) + R() * 0.8; if (v > bv) { bv = v; best = a; } }
+    return best;
+  }
+  /* ---------- solo levels ---------- */
+  const SCRIPTS = [['J', 'J', 'H', 'B'], ['J', 'H', 'J', 'H', 'B', 'B'], ['U', 'B', 'J', 'J'], ['H', 'H', 'D', 'J'], ['J', 'B', 'H', 'D', 'U', 'B'], ['J', 'J', 'J', 'U', 'B', 'D', 'H']];
+  function makeLevels() {
+    const out = [];
+    for (let n = 1; n <= 24; n++) {
+      const world = ((n - 1) / 6) | 0, t = (n - 1) % 6;
+      const lvl = world === 0 ? 0 : world === 1 ? (t < 3 ? 1 : 2) : world === 2 ? (t < 2 ? 2 : 3) : (t < 3 ? 3 : 4);
+      const hpF = world === 0 ? 0.55 + 0.06 * t : world === 1 ? 0.8 + 0.04 * t : world === 2 ? (t < 2 ? 0.98 + 0.03 * t : 0.86 + 0.04 * (t - 2)) : (t < 3 ? 0.9 + 0.05 * t : 0.82 + 0.05 * (t - 3));
+      out.push({ n, opp: lvl, hpOpp: Math.round(HP0 * hpF), script: lvl === 0 ? SCRIPTS[t] : null, seed: 8000 + n * 23, s2: [30, 25, 15, 10][world], s3: [60, 50, 30, 20][world] });
+    }
+    return out;
+  }
+  function stars(lv, f) { if (decided(f) !== 0) return 0; const left = f.hp[0]; return left >= lv.s3 ? 3 : left >= lv.s2 ? 2 : 1; }
+  const API = { ACTS, IDX, COST, MAXE, E0, HP0, MAXB, SUDDEN, DMG, prng, clamp, afford, legal, regen, newFight, step, decided, bot, predict, makeLevels, stars, SCRIPTS };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Box = API;
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/i18n.js ===== */
@@ -1784,10 +1865,43 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_box.js ===== */
+/* SportNest — Robot boxing strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_box: 'איגרוף רובוטים', d_box: 'בוחרים מכה, מנחשים ומנצחים',
+      box_J: 'ג׳אב', box_H: 'הוק', box_U: 'אפרקט', box_B: 'חסימה', box_D: 'התחמקות',
+      box_pick: 'בחרו מכה או הגנה. שניכם בוחרים בו־זמנית', box_two_help: 'כל שחקן בוחר בצד שלו. הבחירה ננעלת מיד', box_wait: 'נעול. ממתין ליריב…', box_locked: 'נעול',
+      box_energy: 'אנרגיה', box_beat: 'חילוף', box_ko: 'נוקאאוט!', box_sd: 'הארכה', box_last: 'הפעולות האחרונות של היריב', box_need: 'נותרו {n} חילופים',
+      box_hit: 'פגיעה', ru_box: '<p>שני רובוטים, חמש פעולות, ושניהם בוחרים בסתר בו־זמנית. כל פעולה מנצחת שתיים ומפסידה לשתיים:</p><p>ג׳אב מנצח הוק והתחמקות. הוק מנצח חסימה ואפרקט. אפרקט מנצח ג׳אב וחסימה. חסימה מנצחת ג׳אב והתחמקות. התחמקות מנצחת הוק ואפרקט.</p><p>לכל פעולה יש מחיר באנרגיה: ג׳אב 1, הוק 2, אפרקט 3, התחמקות 1, חסימה חינם ומחזירה אנרגיה כפולה. אי אפשר לבחור פעולה שאין לכם אנרגיה לשלם עליה. האנרגיה והחיים גלויים לשניכם, וכך גם הפעולות הקודמות של היריב.</p><p>מי שחוזר על אותה פעולה מתגלה במהירות והמחשב ינצל את זה. בשלבים הראשונים הרובוט היריב חוזר על דפוס, ומי שמבחין בו מנצח בקלות. הקרב נמשך עד 24 חילופים או עד נוקאאוט, ומי שנשאר עם יותר חיים מנצח.</p>' },
+    en: { g_box: 'Robot Boxing', d_box: 'Pick a move, outguess, win',
+      box_J: 'Jab', box_H: 'Hook', box_U: 'Uppercut', box_B: 'Block', box_D: 'Dodge',
+      box_pick: 'Pick a punch or a defence. You both choose at the same time', box_two_help: 'Each player picks on their own side. The choice locks at once', box_wait: 'Locked. Waiting for the opponent…', box_locked: 'Locked',
+      box_energy: 'Energy', box_beat: 'Exchange', box_ko: 'Knockout!', box_sd: 'Overtime', box_last: 'The opponent’s last moves', box_need: '{n} exchanges left',
+      box_hit: 'Hit', ru_box: '<p>Two robots, five moves, and both pick in secret at the same time. Every move beats two others and loses to two:</p><p>Jab beats Hook and Dodge. Hook beats Block and Uppercut. Uppercut beats Jab and Block. Block beats Jab and Dodge. Dodge beats Hook and Uppercut.</p><p>Moves cost energy: Jab 1, Hook 2, Uppercut 3, Dodge 1, Block is free and gives back double energy. You cannot pick a move you cannot pay for. Energy and health are visible to both, and so are the opponent’s earlier moves.</p><p>If you repeat yourself you get read, and the computer will use it. In the first levels the enemy robot follows a pattern, and whoever spots it wins easily. A fight lasts up to 24 exchanges or until a knockout, and whoever has more health left wins.</p>' },
+    ru: { g_box: 'Бокс роботов', d_box: 'Выбирайте удар, угадывайте, побеждайте',
+      box_J: 'Джеб', box_H: 'Хук', box_U: 'Апперкот', box_B: 'Блок', box_D: 'Уклон',
+      box_pick: 'Выберите удар или защиту. Вы оба выбираете одновременно', box_two_help: 'Каждый выбирает на своей стороне. Выбор фиксируется сразу', box_wait: 'Выбрано. Ждём соперника…', box_locked: 'Выбрано',
+      box_energy: 'Энергия', box_beat: 'Обмен', box_ko: 'Нокаут!', box_sd: 'Овертайм', box_last: 'Последние действия соперника', box_need: 'Осталось обменов: {n}',
+      box_hit: 'Попадание', ru_box: '<p>Два робота, пять действий, и оба выбирают тайно и одновременно. Каждое действие побеждает два других и проигрывает двум:</p><p>Джеб побеждает хук и уклон. Хук побеждает блок и апперкот. Апперкот побеждает джеб и блок. Блок побеждает джеб и уклон. Уклон побеждает хук и апперкот.</p><p>Действия стоят энергии: джеб 1, хук 2, апперкот 3, уклон 1, блок бесплатен и возвращает вдвое больше энергии. Нельзя выбрать действие, на которое не хватает энергии. Энергия и здоровье видны обоим, как и прошлые действия соперника.</p><p>Кто повторяется, того читают, и компьютер этим пользуется. На первых уровнях робот-соперник идёт по шаблону, и тот, кто его заметит, легко побеждает. Бой длится до 24 обменов или до нокаута, побеждает тот, у кого осталось больше здоровья.</p>' },
+    es: { g_box: 'Boxeo de robots', d_box: 'Elige golpe, adivina y gana',
+      box_J: 'Jab', box_H: 'Gancho', box_U: 'Uppercut', box_B: 'Bloqueo', box_D: 'Esquiva',
+      box_pick: 'Elige un golpe o una defensa. Los dos elegís a la vez', box_two_help: 'Cada jugador elige en su lado. La elección se bloquea al instante', box_wait: 'Bloqueado. Esperando al rival…', box_locked: 'Bloqueado',
+      box_energy: 'Energía', box_beat: 'Intercambio', box_ko: '¡K.O.!', box_sd: 'Prórroga', box_last: 'Últimas acciones del rival', box_need: 'Quedan {n} intercambios',
+      box_hit: 'Impacto', ru_box: '<p>Dos robots, cinco acciones, y los dos eligen en secreto a la vez. Cada acción vence a dos y pierde contra dos:</p><p>El jab vence al gancho y a la esquiva. El gancho vence al bloqueo y al uppercut. El uppercut vence al jab y al bloqueo. El bloqueo vence al jab y a la esquiva. La esquiva vence al gancho y al uppercut.</p><p>Las acciones cuestan energía: jab 1, gancho 2, uppercut 3, esquiva 1; el bloqueo es gratis y devuelve el doble de energía. No puedes elegir una acción que no puedes pagar. La energía y la vida son visibles para ambos, y también las acciones anteriores del rival.</p><p>Si te repites, te leen, y el ordenador lo aprovecha. En los primeros niveles el robot enemigo sigue un patrón, y quien lo detecta gana fácil. Un combate dura hasta 24 intercambios o hasta el K.O., y gana quien conserve más vida.</p>' },
+    ar: { g_box: 'ملاكمة الروبوتات', d_box: 'اختر الضربة وخمّن وانتصر',
+      box_J: 'جاب', box_H: 'هوك', box_U: 'أبركت', box_B: 'صد', box_D: 'مراوغة',
+      box_pick: 'اختر ضربة أو دفاعاً. كلاكما يختار في الوقت نفسه', box_two_help: 'كل لاعب يختار في جهته. يُقفل الاختيار فوراً', box_wait: 'تم القفل. بانتظار الخصم…', box_locked: 'مقفل',
+      box_energy: 'الطاقة', box_beat: 'تبادل', box_ko: 'ضربة قاضية!', box_sd: 'وقت إضافي', box_last: 'آخر حركات الخصم', box_need: 'تبقّى {n} تبادلات',
+      box_hit: 'إصابة', ru_box: '<p>روبوتان وخمس حركات، وكلاهما يختار سراً في الوقت نفسه. كل حركة تغلب اثنتين وتخسر أمام اثنتين:</p><p>الجاب يغلب الهوك والمراوغة. الهوك يغلب الصد والأبركت. الأبركت يغلب الجاب والصد. الصد يغلب الجاب والمراوغة. المراوغة تغلب الهوك والأبركت.</p><p>للحركات ثمن من الطاقة: جاب 1، هوك 2، أبركت 3، مراوغة 1، والصد مجاني ويعيد ضعف الطاقة. لا يمكنك اختيار حركة لا تملك طاقتها. الطاقة والصحة ظاهرتان للطرفين، وكذلك حركات الخصم السابقة.</p><p>من يكرر نفسه ينكشف، والحاسوب يستغل ذلك. في المراحل الأولى يتبع الروبوت الخصم نمطاً، ومن يلاحظه يفوز بسهولة. تستمر المباراة حتى 24 تبادلاً أو حتى الضربة القاضية، ويفوز من تبقى له صحة أكثر.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -2848,10 +2962,269 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   };
 })();
 
+/* ===== src/box_ui.js ===== */
+'use strict';
+/* איגרוף רובוטים — שלבים, מול המחשב, שניים בטלפון (מסך מפוצל), אונליין. המנוע: Box.
+   בכל חילוף שני הצדדים בוחרים בסתר ובו־זמנית. התוצאה היא פונקציה טהורה של שתי הבחירות ושל האנרגיה, ולכן שני הטלפונים מגיעים לאותו קרב.
+   אנרגיה וחיים גלויים, והבחירה של היריב נחשפת רק אחרי שגם אתם נעלתם. */
+(function () {
+  const E = Box, LV = E.makeLevels();
+  const VW = 10, TEAM = ['#4f8be8', '#e8584f'], ICON = { J: '👊', H: '🤜', U: '💥', B: '🛡', D: '💨' }, HT = 0.3, RES_END = 1.5;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botLvl = cfg.mode === 'solo' ? cfg.lv.opp : cfg.mode === 'cpu' ? cfg.lv : 0;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0;
+      this.f = E.newFight(this.lv ? this.lv.hpOpp : 0); this.i = 0; this.Rb = E.prng(this.seed * 5 + 1); this.oppQ = {}; this.disp = { hp: this.f.hp.slice(), en: this.f.en.slice() };
+      this.state = this.net ? 'count' : 'prep'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.pending = [null, null]; this.rt = 0; this.rr = null; this.spd = 1;   // spd < 1 only for automated tests
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+      if (this.state === 'prep') this.beginBeat();
+    }
+    mine() { return this.mode === 'two' ? [0, 1] : this.net ? [this.me] : [0]; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views ${two ? 'duo' : 'one'}">${two ? '<div class="pv top"><canvas></canvas></div>' : ''}<div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center"></div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el);
+      this.views = $$('.pv', el).map(box => { const side = two ? (box.classList.contains('top') ? 1 : 0) : (this.net ? this.me : 0); return { box, cv: $('canvas', box), side, rot: two && side === 1, cs: 10, vh: 14, ctx: null }; });
+      this.views.forEach(v => this.bindInput(v));
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      this.views.forEach(v => {
+        const r = v.box.getBoundingClientRect(); v.cs = Math.max(8, Math.min((r.width - 2) / VW, (r.height - 2) / 14)); v.vh = Math.max(14, Math.min(17.5, (r.height - 2) / v.cs)); const d = Math.min(window.devicePixelRatio || 1, 2), w = VW * v.cs, h = v.vh * v.cs;
+        v.cv.width = Math.round(w * d); v.cv.height = Math.round(h * d); v.cv.style.width = w + 'px'; v.cv.style.height = h + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+      });
+    }
+    gy(v) { return v.vh - 5.5; }
+    chips(v) {   // hit boxes in view units: J H U on the first row, B D on the second
+      const out = [], y1 = v.vh - 4.25, y2 = v.vh - 2.8;
+      ['J', 'H', 'U'].forEach((a, k) => out.push({ a, x: 0.35 + k * 3.15, y: y1, w: 3.0, h: 1.3 })); ['B', 'D'].forEach((a, k) => out.push({ a, x: 0.35 + k * 4.8, y: y2, w: 4.5, h: 1.3 }));
+      return out;
+    }
+    /* ---------- input ---------- */
+    local(v, e) { const r = v.cv.getBoundingClientRect(); let x = e.clientX - r.left, y = e.clientY - r.top; if (v.rot) { x = r.width - x; y = r.height - y; } return { x: x / v.cs, y: y / v.cs }; }
+    canAct(v) { return this.state === 'prep' && !this.paused && this.mine().includes(v.side) && this.pending[v.side] === null; }
+    bindInput(v) {
+      v.cv.addEventListener('pointerdown', e => {
+        e.preventDefault(); if (!this.canAct(v)) return; const p = this.local(v, e), hit = this.chips(v).find(c => p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h);
+        if (hit) this.lock(v.side, hit.a);
+      });
+      v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    /* ---------- beat flow ---------- */
+    beginBeat() {
+      this.state = 'prep'; this.pending = [null, null]; this.rt = 0; this.rr = null; this.i = this.f.beat;
+      if (this.mode === 'solo' || this.mode === 'cpu') this.botIn = ((this.mode === 'solo' ? 0.7 : 0.9) + this.Rb() * 1.3) * this.spd; else this.botIn = null;
+      this.autoIn = this.net ? 15 : null;
+      this.msg.textContent = this.mode === 'two' ? T('box_two_help') : T('box_pick');
+      const q = this.oppQ[this.i]; if (q) { delete this.oppQ[this.i]; this.onMessage(q); }
+    }
+    lock(side, a) {
+      if (this.state !== 'prep' || this.pending[side] !== null || !this.mine().includes(side)) return;   // only your own side may choose
+      if (!E.ACTS.includes(a) || !E.afford(this.f.en[side], a)) return;
+      this.pending[side] = a; SFX.tap(); if (this.net) { Net.link.send({ type: 'act', i: this.i, a }); this.msg.textContent = T('box_wait'); }
+      this.check();
+    }
+    botFire() {
+      if (this.pending[1] !== null) return;
+      const a = E.bot(this.botLvl, { me: 1, en: this.f.en, hp: this.f.hp, hist: this.f.hist, beat: this.f.beat, script: this.lv && this.lv.script }, this.Rb);
+      this.pending[1] = a; this.check();
+    }
+    check() { if (this.state === 'prep' && this.pending[0] !== null && this.pending[1] !== null) this.resolve(); }
+    resolve() {
+      this.prev = { hp: this.f.hp.slice(), en: this.f.en.slice() };
+      this.rr = E.step(this.f, this.pending[0], this.pending[1]); this.state = 'res'; this.rt = 0; this.hitDone = false; this.msg.textContent = '';
+    }
+    revealHit() {
+      this.hitDone = true; this.disp = { hp: this.f.hp.slice(), en: this.f.en.slice() }; const mine = this.mode === 'two' ? [0, 1] : [this.net ? this.me : 0];
+      const took = this.rr.dmg; if (took[0] || took[1]) { const me = mine[0]; if (took[1 - me] > took[me]) { SFX.win(); vib(25); } else if (took[me] > 0) { SFX.lose(); vib(40); } else SFX.lock(); } else SFX.lock();
+    }
+    advance() {
+      const d = E.decided(this.f); let end = null;
+      if (d !== null) { if (this.mode === 'solo') end = d === 0 ? { win: true, stars: E.stars(this.lv, this.f) } : { win: false }; else end = { res: d }; }
+      if (end) { this.state = 'end'; setTimeout(() => this.finish(end), 400); return; }
+      this.beginBeat();
+    }
+    onMessage(m) {
+      if (m.type === 'act') {
+        const opp = 1 - this.me;
+        if (m.i === this.i && this.state === 'prep' && this.pending[opp] === null) { this.pending[opp] = E.ACTS.includes(m.a) ? m.a : 'B'; this.check(); }
+        else if (m.i > this.i && this.state !== 'end' && this.state !== 'fin') this.oppQ[m.i] = m;
+      } else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('box'); let html = '', btns = ''; const hp = `🥊 ${this.f.hp[0]} : ${this.f.hp[1]}`;
+      if (m === 'solo') {
+        const win = !!end.win, n = this.lv.n;
+        if (win) { if (end.stars > (st.lv[n] || 0)) st.lv[n] = end.stars; st.games++; st.wins++; saveP(); Meta.after('box', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(end.stars)}${'☆'.repeat(3 - end.stars)}</div><p>${hp}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('box', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>${hp}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (r === 'draw') title = T('draw'); else if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('box', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('box', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>${hp}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; this.paused = true; const online = this.net;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      if (!this.paused) {
+        if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.beginBeat(); SFX.go(); } }
+        else if (this.state === 'prep') {
+          if (this.botIn != null) { this.botIn -= dt; if (this.botIn <= 0) { this.botIn = null; this.botFire(); } }
+          if (this.autoIn != null && this.pending[this.me] === null) { this.autoIn -= dt; if (this.autoIn <= 0) { this.autoIn = null; this.lock(this.me, 'B'); } }
+        } else if (this.state === 'res') { this.rt += dt; if (!this.hitDone && this.rt >= HT) this.revealHit(); if (this.rt > RES_END * this.spd) this.advance(); }
+      }
+      this.t += dt; this.draw(); this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    /* ---------- drawing ---------- */
+    draw() { this.views.forEach(v => { if (v.ctx) this.drawView(v); }); this.stat(); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return; const f = this.f, sd = f.beat >= E.MAXB, left = Math.max(0, E.MAXB - f.beat);
+      if (this.mode === 'solo') st.innerHTML = `<span>🥊 ${this.disp.hp[0]}<small>${esc(this.nameOf(0))}</small></span><span>${sd ? T('box_sd') : Math.min(f.beat + 1, E.MAXB) + '/' + E.MAXB}<small>${sd ? ' ' : T('box_need', { n: left })}</small></span><span>${this.disp.hp[1]}<small>${esc(this.nameOf(1))}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">${this.disp.hp[0]}<small>${esc(this.nameOf(0))}</small></span><span>${sd ? T('box_sd') : Math.min(f.beat + 1, E.MAXB) + '/' + E.MAXB}<small>${T('box_beat')}</small></span><span style="color:${TEAM[1]}">${this.disp.hp[1]}<small>${esc(this.nameOf(1))}</small></span>`;
+    }
+    glove(c, cs, x, y, r, col) { c.fillStyle = col; c.strokeStyle = '#1b1b1f'; c.lineWidth = cs * 0.05; c.beginPath(); c.arc(x * cs, y * cs, r * cs, 0, 7); c.fill(); c.stroke(); c.fillStyle = 'rgba(255,255,255,.35)'; c.beginPath(); c.arc((x - r * 0.3) * cs, (y - r * 0.3) * cs, r * 0.32 * cs, 0, 7); c.fill(); }
+    // pose of one fighter at animation time q (seconds into the exchange); returns relative coordinates (x toward the opponent, y up from the floor)
+    pose(act, q, took, hitT) {
+      const bob = Math.sin(this.t * 4) * 0.06, idle = { g1: [0.95, 2.95 + bob], g2: [0.7, 2.55 + bob], lean: 0, drop: 0, step: 0 };
+      if (!act || q < 0) return idle;
+      const k = clamp((q - 0.05) / 0.4, 0, 1), s = Math.sin(Math.PI * k), P = idle;
+      if (act === 'J') { P.g1 = [0.95 + 1.5 * s, 2.9]; P.step = 0.3 * s; }
+      else if (act === 'H') { P.g1 = [0.4 + 1.6 * s, 3.0 - 0.1 * s]; P.g2 = [0.6 + 0.9 * s, 2.7 + 0.35 * s]; P.step = 0.45 * s; P.lean = 0.2 * s; }
+      else if (act === 'U') { P.g1 = [0.9 + 0.8 * s, 1.1 + 2.5 * s]; P.step = 0.5 * s; P.lean = 0.15 * s; }
+      else if (act === 'B') { P.g1 = [0.95, 3.2]; P.g2 = [0.8, 2.85]; }
+      else if (act === 'D') { P.lean = -0.55 * s; P.drop = 0.35 * s; P.step = -0.5 * s; P.g1 = [0.7, 2.45]; P.g2 = [0.5, 2.2]; }
+      if (took > 0 && q > hitT) { const r = clamp((q - hitT) / 0.35, 0, 1), sh = Math.sin(Math.PI * r); P.step -= 0.55 * sh; P.lean -= 0.3 * sh; }
+      return P;
+    }
+    drawFighter(c, cs, v, side, left, act, took) {
+      const gy = this.gy(v), dir = left ? 1 : -1, col = TEAM[side], fx = left ? 2.9 : 7.1, q = this.state === 'res' ? this.rt : -1, P = this.pose(act, q, took, HT), bx = fx + dir * P.step, X = x => (bx + dir * x) * cs, Y = y => (gy - y) * cs;
+      const lx = (bx + dir * P.lean * 0.5), headY = gy - 3.55 + P.drop;
+      c.save(); c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(bx * cs, gy * cs + cs * 0.1, cs * 1.0, cs * 0.22, 0, 0, 7); c.fill();
+      c.strokeStyle = '#8b93a3'; c.lineWidth = cs * 0.34; c.lineCap = 'round'; c.beginPath(); c.moveTo((bx - 0.28) * cs, (gy - 1.5) * cs); c.lineTo((bx - 0.38 * dir * 0 - 0.28 + dir * 0.0) * cs, gy * cs); c.moveTo((bx + 0.28) * cs, (gy - 1.5) * cs); c.lineTo((bx + 0.28 + dir * 0.18) * cs, gy * cs); c.stroke();
+      c.fillStyle = col; c.strokeStyle = '#1b1b1f'; c.lineWidth = cs * 0.06; c.beginPath(); c.roundRect((lx - 0.68) * cs, (gy - 3.05 + P.drop) * cs, 1.36 * cs, 1.6 * cs, cs * 0.3); c.fill(); c.stroke();
+      c.fillStyle = 'rgba(255,255,255,.85)'; c.beginPath(); c.arc(lx * cs, (gy - 2.2 + P.drop) * cs, cs * 0.17, 0, 7); c.fill();
+      // arms: from the shoulders to the gloves
+      const sh = [(lx + dir * 0.35) * cs, (gy - 2.75 + P.drop) * cs]; c.strokeStyle = '#a9b0bf'; c.lineWidth = cs * 0.24;
+      [P.g2, P.g1].forEach((g, k) => { const gx = X(g[0] + P.lean * 0.5), gyy = Y(g[1] - P.drop); c.beginPath(); c.moveTo(sh[0], sh[1]); c.lineTo(gx, gyy); c.stroke(); });
+      const art = Art.get('box-head' + (side + 1)), hx = lx * cs, hy = headY * cs;
+      if (art) c.drawImage(art, hx - cs * 0.75, hy - cs * 0.8, cs * 1.5, cs * 1.5);
+      else { c.save(); c.translate(hx, hy); c.fillStyle = '#c6ccd8'; c.strokeStyle = '#1b1b1f'; c.lineWidth = cs * 0.06; c.beginPath(); c.roundRect(-cs * 0.58, -cs * 0.55, cs * 1.16, cs * 1.05, cs * 0.25); c.fill(); c.stroke(); c.fillStyle = col; c.fillRect(-cs * 0.58, -cs * 0.55, cs * 1.16, cs * 0.2); c.fillStyle = '#10151f'; c.beginPath(); c.roundRect(dir * cs * 0.0 - cs * 0.34 + dir * cs * 0.14, -cs * 0.2, cs * 0.68, cs * 0.3, cs * 0.1); c.fill(); c.fillStyle = '#7dffb0'; [-1, 1].forEach(sg => { c.beginPath(); c.arc(dir * cs * 0.14 + sg * cs * 0.18, -cs * 0.05, cs * 0.065, 0, 7); c.fill(); }); c.strokeStyle = '#1b1b1f'; c.lineWidth = cs * 0.05; c.beginPath(); c.moveTo(0, -cs * 0.55); c.lineTo(0, -cs * 0.8); c.stroke(); c.fillStyle = col; c.beginPath(); c.arc(0, -cs * 0.83, cs * 0.08, 0, 7); c.fill(); c.restore(); }
+      [P.g2, P.g1].forEach((g, k) => this.glove(c, cs, bx + dir * (g[0] + P.lean * 0.5), gy - g[1] + P.drop, 0.34, k ? col : '#f4efe3'));
+      c.restore();
+      return { x: bx, hy: headY };
+    }
+    drawView(v) {
+      const c = v.ctx, cs = v.cs, vh = v.vh, X = x => x * cs, Y = y => y * cs, gy = this.gy(v), bgA = Art.get('bg-box'), role = this.mine().includes(v.side), mi = v.side, op = 1 - mi, two = this.mode === 'two';
+      c.clearRect(0, 0, VW * cs, vh * cs); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, VW * cs, vh * cs, 14); c.clip();
+      if (bgA) c.drawImage(bgA, 0, 0, VW * cs, vh * cs);
+      else {
+        const wl = c.createLinearGradient(0, 0, 0, Y(gy)); wl.addColorStop(0, '#1b1f33'); wl.addColorStop(1, '#3a3350'); c.fillStyle = wl; c.fillRect(0, 0, X(VW), Y(gy));
+        c.fillStyle = 'rgba(255,255,255,.5)'; const R = E.prng(14); for (let k = 0; k < 46; k++) { c.globalAlpha = 0.15 + R() * 0.3; c.beginPath(); c.arc(X(R() * VW), Y(0.4 + R() * (gy - 1.2)), cs * (0.04 + R() * 0.05), 0, 7); c.fill(); } c.globalAlpha = 1;
+        const fl = c.createLinearGradient(0, Y(gy), 0, Y(vh)); fl.addColorStop(0, '#5b6e9c'); fl.addColorStop(1, '#34406a'); c.fillStyle = fl; c.fillRect(0, Y(gy - 0.2), X(VW), Y(vh - gy + 0.2));
+      }
+      // ropes and corner posts are always drawn by the code (their height follows the screen), over the background art
+      c.strokeStyle = '#e8584f'; c.lineWidth = cs * 0.09; [gy - 3.7, gy - 2.7, gy - 1.7].forEach(y => { c.beginPath(); c.moveTo(0, Y(y)); c.lineTo(X(VW), Y(y)); c.stroke(); }); c.strokeStyle = '#d8dbe6'; c.lineWidth = cs * 0.25; [0.12, VW - 0.12].forEach(x => { c.beginPath(); c.moveTo(X(x), Y(gy - 4.1)); c.lineTo(X(x), Y(gy + 0.2)); c.stroke(); });
+      // board: names, health, energy, opponent history
+      this.drawBoard(c, cs, v, mi, op);
+      // fighters
+      const a = this.rr && this.state !== 'prep' ? this.rr.a : [null, null], took = this.rr ? this.rr.dmg : [0, 0], gl = this.state === 'res';
+      const pm = this.drawFighter(c, cs, v, mi, true, gl ? a[mi] : null, took[mi]), po = this.drawFighter(c, cs, v, op, false, gl ? a[op] : null, took[op]);
+      // energy pips under each fighter
+      [[mi, 2.9], [op, 7.1]].forEach(([s, x]) => { for (let k = 0; k < E.MAXE; k++) { const cx = x + (k - (E.MAXE - 1) / 2) * 0.46, on = k < this.disp.en[s]; c.beginPath(); c.arc(X(cx), Y(gy + 0.62), cs * 0.15, 0, 7); c.fillStyle = on ? '#ffd877' : 'rgba(255,255,255,.12)'; c.fill(); c.strokeStyle = on ? '#1b1b1f' : 'rgba(255,255,255,.4)'; c.lineWidth = cs * 0.04; c.stroke(); } });
+      // exchange feedback: the chosen action over each head, damage numbers
+      if (gl && this.rr) {
+        const k = clamp(this.rt / 0.25, 0, 1); [[mi, pm, 1], [op, po, -1]].forEach(([s, p, dir]) => {
+          c.save(); c.globalAlpha = k; c.font = `800 ${cs * 0.5}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round'; c.lineWidth = cs * 0.14; c.strokeStyle = 'rgba(0,0,0,.7)'; c.fillStyle = '#fff'; const tx = ICON[a[s]] + ' ' + T('box_' + a[s]); c.strokeText(tx, X(p.x), Y(gy - 4.8)); c.fillText(tx, X(p.x), Y(gy - 4.8));
+          if (this.hitDone && took[s] > 0) { const r = clamp((this.rt - HT) / 0.8, 0, 1); c.globalAlpha = 1 - r * r; c.font = `900 ${cs * 0.95}px system-ui`; c.fillStyle = '#ff6b6b'; const dy = gy - 5.6 - r * 0.9, t2 = '-' + took[s]; c.strokeText(t2, X(p.x), Y(dy)); c.fillText(t2, X(p.x), Y(dy)); }
+          c.restore(); });
+        const ko = E.decided(this.f); if (this.hitDone && ko !== null && (this.f.hp[0] <= 0 || this.f.hp[1] <= 0)) { c.save(); c.font = `900 ${cs * 1.7}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.25; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.75)'; c.fillStyle = '#ffd877'; c.strokeText(T('box_ko'), X(5), Y(gy - 6.4)); c.fillText(T('box_ko'), X(5), Y(gy - 6.4)); c.restore(); }
+      }
+      if (role && this.state !== 'count') this.drawControls(c, cs, v);
+      c.restore();
+    }
+    bar(c, cs, x, y, w, h, hp, max, col, left) {
+      c.fillStyle = 'rgba(0,0,0,.5)'; c.beginPath(); c.roundRect(x * cs, y * cs, w * cs, h * cs, h * cs / 2); c.fill();
+      const f = clamp(hp / max, 0, 1), fw = Math.max(0, w * f); if (fw > 0.01) { c.fillStyle = col; c.beginPath(); c.roundRect((left ? x : x + w - fw) * cs, y * cs, fw * cs, h * cs, h * cs / 2); c.fill(); }
+      c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = cs * 0.04; c.beginPath(); c.roundRect(x * cs, y * cs, w * cs, h * cs, h * cs / 2); c.stroke();
+    }
+    drawBoard(c, cs, v, mi, op) {
+      const X = x => x * cs, Y = y => y * cs, hp0 = Math.max(E.HP0, this.f.hp[0], this.f.hp[1], this.lv ? this.lv.hpOpp : 0);
+      c.fillStyle = 'rgba(8,14,24,.78)'; c.beginPath(); c.roundRect(X(0.25), Y(0.12), X(9.5), Y(1.75), cs * 0.25); c.fill(); c.textBaseline = 'middle';
+      [[mi, true, 0.55], [op, false, 1.4]].forEach(([s, left, y]) => {
+        c.textAlign = 'left'; c.fillStyle = TEAM[s]; c.font = `800 ${cs * 0.4}px system-ui`; c.fillText(this.nameOf(s).slice(0, 8), X(0.55), Y(y - 0.0));
+        this.bar(c, cs, 2.5, y - 0.2, 5.6, 0.4, this.disp.hp[s], hp0, TEAM[s], true);
+        c.textAlign = 'right'; c.fillStyle = '#fff'; c.font = `800 ${cs * 0.42}px system-ui`; c.fillText(String(this.disp.hp[s]), X(9.5), Y(y));
+      });
+      // the opponent's last revealed actions (public, a good player reads them)
+      const h = this.f.hist[op], n = Math.min(5, h.length); c.textAlign = 'left'; c.fillStyle = 'rgba(255,255,255,.75)'; c.font = `700 ${cs * 0.34}px system-ui`;
+      if (n) { c.fillText(T('box_last'), X(0.45), Y(2.35)); for (let k = 0; k < n; k++) { const a = h[h.length - 1 - k]; c.font = `${cs * 0.62}px system-ui`; c.textAlign = 'center'; c.fillText(ICON[a], X(0.7 + k * 0.78), Y(3.05)); } }
+    }
+    drawControls(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, can = this.canAct(v), en = this.f.en[v.side], mine = this.pending[v.side], dim = this.state === 'res';
+      this.chips(v).forEach(h => {
+        const ok = E.afford(en, h.a), on = mine === h.a, locked = mine !== null, dis = !ok || (locked && !on) || dim;
+        c.fillStyle = on ? '#ffd877' : dis ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.16)'; c.strokeStyle = on ? '#fff' : 'rgba(255,255,255,.3)'; c.lineWidth = cs * 0.05; c.beginPath(); c.roundRect(X(h.x), Y(h.y), X(h.w), Y(h.h), cs * 0.3); c.fill(); c.stroke();
+        c.fillStyle = on ? '#1b1b1f' : dis ? 'rgba(255,255,255,.35)' : '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.font = `800 ${cs * 0.5}px system-ui`; c.fillText(ICON[h.a] + ' ' + T('box_' + h.a), X(h.x + h.w / 2), Y(h.y + h.h * 0.36));
+        c.font = `700 ${cs * 0.36}px system-ui`; c.fillText(h.a === 'B' ? '+' + E.regen('B') + ' ⚡' : '−' + E.COST[h.a] + ' ⚡', X(h.x + h.w / 2), Y(h.y + h.h * 0.77)); });
+      if (mine !== null && this.state === 'prep') { c.fillStyle = 'rgba(0,0,0,.55)'; c.font = `800 ${cs * 0.5}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.14; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.7)'; c.fillStyle = '#ffd877'; c.strokeText('🔒 ' + T('box_locked'), X(5), Y(this.gy(v) - 6.2)); c.fillText('🔒 ' + T('box_locked'), X(5), Y(this.gy(v) - 6.2)); }
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'box'; setPlayBg('box'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.box = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#3a3350"/><rect y="50" width="90" height="20" fill="#34406a"/><path d="M0 22H90M0 34H90M0 46H90" stroke="#e8584f" stroke-width="2"/><rect x="14" y="24" width="18" height="22" rx="5" fill="#4f8be8"/><rect x="16" y="10" width="14" height="13" rx="4" fill="#c6ccd8"/><rect x="58" y="24" width="18" height="22" rx="5" fill="#e8584f"/><rect x="60" y="10" width="14" height="13" rx="4" fill="#c6ccd8"/><circle cx="40" cy="30" r="6" fill="#f4efe3" stroke="#1b1b1f" stroke-width="1.5"/><circle cx="50" cy="30" r="6" fill="#e8584f" stroke="#1b1b1f" stroke-width="1.5"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'box', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen', 'hoop', 'dart'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯' };
+const GAME_IDS = ['pen', 'hoop', 'dart', 'box'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
