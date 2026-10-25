@@ -166,6 +166,7 @@ input.txt:focus{border-color:var(--acc)}
 :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] 
 #play[data-bg=pen]{background:linear-gradient(180deg,#27406a,#2f5d86 40%,#3d8a55)}
 #play[data-bg=hoop]{background:linear-gradient(180deg,#26335a,#3b4f86 45%,#a96d33)}
+#play[data-bg=dart]{background:linear-gradient(180deg,#2a1f33,#3a2a46 50%,#25303f)}
 .pen-views{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
 .pen-views .pv{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
 .pen-views.duo .pv.top canvas{transform:rotate(180deg)}
@@ -633,6 +634,99 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   function defVs(seed, i) { const R = prng(seed * 53 + i * 19 + 11); return R() < 0.4 ? 0.7 : 0; }   // public: both sides face the same defender in a round
   const API = { defVs, ARCN, ARCW, TOL, VAL, ROUNDS, SUDDEN, prng, gauss, clamp, pIdeal, tol, period, tri, meterP, clampShot, resolve, SB, SKILL, pIn, botPick, botShot, decided, makeLevels, levelState, defAt, allowedOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Hoop = API;
+})(typeof self !== 'undefined' ? self : this);
+
+/* ===== engines/dart.js ===== */
+/* SportNest — darts engine (pure, deterministic).
+   Board coordinates: unit = radius of the outer edge of the double ring; x right, y up. The landing point of a dart is
+   aim + sway(hold time) + a little throwing noise. The sway is a fast wobble that calms while you hold (breathing) and builds
+   again when you hold too long. Everything random comes from (seed, side, dart index), so two phones agree on every dart.
+   Bots only know their own accuracy; there is no hidden information in this game. */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+  const RB = 0.0374, ROB = 0.0935, T0 = 0.582, T1 = 0.629, D0 = 0.953, D1 = 1.0;     // bull, outer bull, triple ring, double ring
+  const ROUNDS = 4, PER = 3, SUDDEN = 3;
+  /* ---------- the board ---------- */
+  function hit(x, y) {
+    const r = Math.hypot(x, y);
+    if (r > D1) return { zone: 'miss', pts: 0, num: 0, mult: 0, r };
+    if (r <= RB) return { zone: 'bull', pts: 50, num: 25, mult: 2, r };
+    if (r <= ROB) return { zone: 'obull', pts: 25, num: 25, mult: 1, r };
+    const th = Math.atan2(x, y), seg = Math.floor((((th + Math.PI / 20) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 10)) % 20, num = ORDER[seg];
+    const mult = r >= T0 && r <= T1 ? 3 : r >= D0 ? 2 : 1;
+    return { zone: mult === 3 ? 'tri' : mult === 2 ? 'dbl' : 'single', pts: num * mult, num, mult, r };
+  }
+  // rule: {k:'all'} | {k:'bull'} | {k:'num', n} | {k:'dbl'} | {k:'tri'}   (only what the rule counts is scored)
+  function score(h, rule) {
+    const k = rule ? rule.k : 'all';
+    if (k === 'all') return h.pts; if (k === 'bull') return h.zone === 'bull' || h.zone === 'obull' ? h.pts : 0;
+    if (k === 'num') return h.num === rule.n && h.zone !== 'bull' && h.zone !== 'obull' ? h.pts : 0;
+    if (k === 'dbl') return h.zone === 'dbl' ? h.pts : 0; if (k === 'tri') return h.zone === 'tri' ? h.pts : 0; return 0;
+  }
+  /* ---------- sway ---------- */
+  const A0 = 0.36, FM = 0.16, T1S = 0.9, GROW = 0.35;
+  const amp = (t, w) => A0 * (w || 1) * (t < T1S ? 1 - (1 - FM) * (t / T1S) : Math.min(1, FM + (t - T1S) * GROW));
+  const phases = (ctx) => { const R = prng((ctx.seed || 1) * 173 + (ctx.side || 0) * 29 + (ctx.i || 0) * 13 + 7); return { px: R() * 6.283, py: R() * 6.283, wx: 6.1 + R() * 1.6, wy: 7.4 + R() * 1.6, R }; };
+  function sway(t, ctx, ph) { ph = ph || phases(ctx); const a = amp(t, ctx.w); return { dx: a * Math.cos(ph.wx * t + ph.px), dy: a * Math.sin(ph.wy * t + ph.py) }; }
+  const NOISE = 0.012;
+  function land(aim, hold, ctx) {
+    const ph = phases(ctx), t = clamp(+hold || 0, 0, 4), s = sway(t, ctx, ph), w = ctx.w || 1;
+    const x = aim.x + s.dx + gauss(ph.R) * NOISE * w, y = aim.y + s.dy + gauss(ph.R) * NOISE * w, h = hit(x, y);
+    return { x, y, hit: h, pts: score(h, ctx.rule), T: 0.32 };
+  }
+  const clampAim = a => ({ x: clamp(+a.x || 0, -1.15, 1.15), y: clamp(+a.y || 0, -1.15, 1.15) });
+  /* ---------- bots ---------- */
+  const TAU = [0, 0.3, 0.12, 0.06, 0.03], LOOK = [0, 0, 1, 1, 1];     // timing spread; whether the bot waits for the wobble to cross its aim
+  function botHold(lvl, ctx, R) {
+    if (lvl === 1 || !LOOK[lvl]) return 0.15 + R() * 2.2;
+    const ph = phases(ctx); let best = 1, bv = 1e9; for (let t = 0.45; t <= 1.5; t += 0.01) { const s = sway(t, ctx, ph), m = Math.hypot(s.dx, s.dy); if (m < bv) { bv = m; best = t; } }
+    return clamp(best + gauss(R) * TAU[lvl], 0.1, 3.5);
+  }
+  const AIM_CACHE = {};
+  function bestAim(lvl, rule, w) {
+    const key = lvl + '|' + JSON.stringify(rule) + '|' + (w || 1); if (AIM_CACHE[key]) return AIM_CACHE[key];
+    if (lvl === 1) return AIM_CACHE[key] = null;
+    const S = 260, offs = []; for (let s = 0; s < S; s++) { const ctx = { seed: 9000 + s, side: 0, i: s, w, rule }, R = prng(s * 7 + lvl), t = botHold(lvl, ctx, R), sw = sway(t, ctx), R2 = prng(s * 31 + 5); offs.push([sw.dx + gauss(R2) * NOISE * (w || 1), sw.dy + gauss(R2) * NOISE * (w || 1)]); }
+    let best = { x: 0, y: 0 }, bv = -1; const step = 0.06;
+    for (let ax = -0.9; ax <= 0.9001; ax += step) for (let ay = -0.9; ay <= 0.9001; ay += step) { if (Math.hypot(ax, ay) > 0.95) continue; let tot = 0; for (let s = 0; s < S; s++) tot += score(hit(ax + offs[s][0], ay + offs[s][1]), rule); if (tot > bv) { bv = tot; best = { x: ax, y: ay }; } }
+    return AIM_CACHE[key] = { x: best.x, y: best.y, ev: bv / S };
+  }
+  function botDart(lvl, ctx, R) {
+    let aim; const rule = ctx.rule || { k: 'all' };
+    if (lvl === 1) { const a = R() * 6.283, r = Math.sqrt(R()) * 0.55; aim = { x: Math.cos(a) * r, y: Math.sin(a) * r }; }
+    else if (lvl === 2) { aim = rule.k === 'all' || rule.k === 'bull' ? { x: 0, y: 0 } : bestAim(2, rule, ctx.w); }
+    else aim = bestAim(lvl, rule, ctx.w);
+    return { aim: { x: aim.x, y: aim.y }, hold: botHold(lvl, ctx, R) };
+  }
+  /* ---------- match: rounds of 3 darts each (side 0 then side 1), then sudden-death rounds ---------- */
+  const throwerOf = i => Math.floor(i / PER) % 2, roundOf = i => Math.floor(i / (PER * 2));
+  function decided(sc, k) {                      // k = completed rounds (both sides threw their 3 darts)
+    if (k < ROUNDS) return null; const lead = sc[0] - sc[1]; if (lead) return lead > 0 ? 0 : 1; return k >= ROUNDS + SUDDEN ? 'draw' : null;
+  }
+  /* ---------- solo levels ---------- */
+  const RULES = {};
+  (function () { const w0 = ['all', 'all', 'n20', 'all', 'all', 'bull'], w1 = ['all', 'all', 'n19', 'dbl', 'all', 'bull'], w2 = ['all', 'tri', 'n18', 'all', 'dbl', 'bull'], w3 = ['all', 'tri', 'n17', 'dbl', 'tri', 'bull']; [w0, w1, w2, w3].forEach((w, wi) => w.forEach((k, j) => { const n = wi * 6 + j + 1; RULES[n] = k.startsWith('n') ? { k: 'num', n: +k.slice(1) } : { k }; })); })();
+  const EV3 = [0,33.6,32.7,32.2,32.3,32.3,27.3,30.7,31.8,28.7,9.8,29.9,23.7,28.3,14.2,25.1,27.6,8.4,20.6,26.6,13.6,21.3,8.2,11.7,17.1];   // expected points per dart of a steady (level 3) player under each level's rule; calibrated by tools/dart_sim.js
+  const FR = n => 0.52 + 0.022 * ((n - 1) % 6) + 0.075 * (((n - 1) / 6) | 0);
+  function makeLevels() {
+    const out = [];
+    for (let n = 1; n <= 24; n++) {
+      const darts = n <= 12 ? 9 : 12, rule = RULES[n], w = 0.9 + 0.025 * (n - 1), goal = Math.max(10, Math.round(darts * EV3[n] * FR(n) / 5) * 5);
+      out.push({ n, darts, rule, w, goal, g2: Math.round(goal * 1.3 / 5) * 5 + 5, g3: Math.round(goal * 1.65 / 5) * 5 + 10, seed: 6000 + n * 19 });
+    }
+    return out;
+  }
+  function levelState(lv, pts, k) {
+    if (pts >= lv.g3) return { done: true, win: true, stars: 3 };
+    if (k >= lv.darts) return pts >= lv.g2 ? { done: true, win: true, stars: 2 } : pts >= lv.goal ? { done: true, win: true, stars: 1 } : { done: true, win: false, stars: 0 };
+    return { done: false };
+  }
+  const API = { ORDER, RB, ROB, T0, T1, D0, D1, ROUNDS, PER, SUDDEN, prng, gauss, clamp, hit, score, amp, sway, phases, land, clampAim, botHold, bestAim, botDart, TAU, throwerOf, roundOf, decided, makeLevels, levelState, RULES, EV3, NOISE };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Dart = API;
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/i18n.js ===== */
@@ -1657,10 +1751,43 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_dart.js ===== */
+/* SportNest — Darts strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_dart: 'חצים', d_dart: 'מכוונים, מרגיעים את היד וזורקים',
+      dart_help: 'גררו לכוון, החזיקו כדי להרגיע את היד ושחררו כשהסמן על המטרה', dart_two_help: 'כל שחקן זורק בתורו, על הלוח שלו', dart_wait: 'ממתין לזריקה של היריב…',
+      dart_miss: 'החטאה', dart_need: 'צריך {n} נקודות', dart_dart: 'חץ', dart_round: 'סיבוב', dart_sd: 'הארכה',
+      dart_r_all: 'כל הנקודות', dart_r_bull: 'רק המרכז', dart_r_num: 'רק מספר {n}', dart_r_dbl: 'רק הטבעת הכפולה', dart_r_tri: 'רק הטבעת המשולשת',
+      ru_dart: '<p>זורקים חצים ללוח. גוררים אצבע כדי לכוון, מחזיקים אותה על המסך כדי להרגיע את היד, ומשחררים כשהסמן נמצא על המטרה. הסמן רועד, והרעד נרגע כשמחזיקים קצת, אבל אם מחזיקים יותר מדי הוא חוזר ומתגבר.</p><p>הטבעת הצרה החיצונית שווה כפול, הטבעת הצרה הפנימית שווה פי שלוש, ומרכז הלוח שווה 25 או 50. מי שמצליח לדייק מכוון על פי שלוש של 20. מי שפחות מדויק משתלם לו לכוון אל אזור גדול יותר.</p><p>בשלבים לפעמים רק חלק מהלוח נחשב, והוא מסומן בקו מקווקו. במשחק מול יריב כל אחד זורק 3 חצים בכל סיבוב, ארבעה סיבובים, והמנצח מי שצבר יותר נקודות. בתיקו ממשיכים בהארכה.</p>' },
+    en: { g_dart: 'Darts', d_dart: 'Aim, steady your hand, throw',
+      dart_help: 'Drag to aim, hold to steady your hand, release when the marker is on target', dart_two_help: 'Each player throws on their turn, on their own board', dart_wait: 'Waiting for the opponent’s throw…',
+      dart_miss: 'Miss', dart_need: 'Need {n} points', dart_dart: 'Dart', dart_round: 'Round', dart_sd: 'Overtime',
+      dart_r_all: 'All points', dart_r_bull: 'Bull only', dart_r_num: 'Only number {n}', dart_r_dbl: 'Only the double ring', dart_r_tri: 'Only the treble ring',
+      ru_dart: '<p>Throw darts at the board. Drag a finger to aim, hold it on the screen to steady your hand, and release when the marker is on the target. The marker shakes, the shaking calms down while you hold, but if you hold too long it builds up again.</p><p>The thin outer ring counts double, the thin inner ring counts triple, and the centre is worth 25 or 50. A precise player aims for the treble 20. A less precise one does better aiming at a bigger area.</p><p>In some levels only part of the board counts, marked with a dashed line. In a match each player throws 3 darts per round, four rounds, and the higher total wins. A tie goes to overtime.</p>' },
+    ru: { g_dart: 'Дартс', d_dart: 'Цельтесь, успокойте руку, бросайте',
+      dart_help: 'Тяните, чтобы прицелиться, удерживайте, чтобы успокоить руку, и отпустите, когда маркер на цели', dart_two_help: 'Каждый бросает в свою очередь на своей мишени', dart_wait: 'Ждём бросок соперника…',
+      dart_miss: 'Мимо', dart_need: 'Нужно очков: {n}', dart_dart: 'Дротик', dart_round: 'Раунд', dart_sd: 'Овертайм',
+      dart_r_all: 'Все очки', dart_r_bull: 'Только центр', dart_r_num: 'Только число {n}', dart_r_dbl: 'Только удвоение', dart_r_tri: 'Только утроение',
+      ru_dart: '<p>Бросайте дротики в мишень. Тяните палец, чтобы прицелиться, удерживайте его на экране, чтобы успокоить руку, и отпустите, когда маркер на цели. Маркер дрожит, дрожь стихает, пока вы держите, но если держать слишком долго, она снова нарастает.</p><p>Тонкое внешнее кольцо удваивает очки, тонкое внутреннее утраивает, центр даёт 25 или 50. Точный игрок целится в утроение 20. Менее точному выгоднее целиться в большую область.</p><p>На некоторых уровнях засчитывается только часть мишени, она отмечена пунктиром. В матче каждый бросает по 3 дротика за раунд, четыре раунда, побеждает набравший больше очков. При ничьей — овертайм.</p>' },
+    es: { g_dart: 'Dardos', d_dart: 'Apunta, calma el pulso y lanza',
+      dart_help: 'Arrastra para apuntar, mantén para calmar el pulso y suelta cuando el marcador esté sobre el blanco', dart_two_help: 'Cada jugador lanza en su turno, en su propio tablero', dart_wait: 'Esperando el lanzamiento del rival…',
+      dart_miss: 'Fallo', dart_need: 'Faltan {n} puntos', dart_dart: 'Dardo', dart_round: 'Ronda', dart_sd: 'Prórroga',
+      dart_r_all: 'Todos los puntos', dart_r_bull: 'Solo el centro', dart_r_num: 'Solo el número {n}', dart_r_dbl: 'Solo el anillo doble', dart_r_tri: 'Solo el anillo triple',
+      ru_dart: '<p>Lanza dardos al tablero. Arrastra el dedo para apuntar, mantenlo en la pantalla para calmar el pulso y suelta cuando el marcador esté sobre el blanco. El marcador tiembla, el temblor se calma mientras mantienes, pero si mantienes demasiado vuelve a crecer.</p><p>El anillo fino exterior vale doble, el fino interior vale triple y el centro vale 25 o 50. Un jugador preciso apunta al triple 20. Uno menos preciso rinde mejor apuntando a una zona más grande.</p><p>En algunos niveles solo cuenta una parte del tablero, marcada con línea discontinua. En una partida cada jugador lanza 3 dardos por ronda, cuatro rondas, y gana quien sume más. Si hay empate, prórroga.</p>' },
+    ar: { g_dart: 'السهام', d_dart: 'صوّب وهدّئ يدك وارمِ',
+      dart_help: 'اسحب للتصويب، واضغط مطولاً لتهدئة يدك، وأفلت عندما يكون المؤشر على الهدف', dart_two_help: 'كل لاعب يرمي في دوره على لوحته', dart_wait: 'بانتظار رمية الخصم…',
+      dart_miss: 'أخطأت', dart_need: 'مطلوب {n} نقاط', dart_dart: 'سهم', dart_round: 'جولة', dart_sd: 'وقت إضافي',
+      dart_r_all: 'كل النقاط', dart_r_bull: 'المركز فقط', dart_r_num: 'الرقم {n} فقط', dart_r_dbl: 'الحلقة المزدوجة فقط', dart_r_tri: 'الحلقة الثلاثية فقط',
+      ru_dart: '<p>ارمِ السهام نحو اللوحة. اسحب إصبعك للتصويب، واضغط مطولاً على الشاشة لتهدئة يدك، وأفلت عندما يكون المؤشر على الهدف. المؤشر يرتجف، والارتجاف يهدأ ما دمت تضغط، لكنه يعود ويزداد إذا ضغطت أكثر من اللازم.</p><p>الحلقة الرفيعة الخارجية تضاعف النقاط، والرفيعة الداخلية تضربها في ثلاثة، والمركز بـ 25 أو 50. اللاعب الدقيق يصوّب نحو الثلاثية في 20. أما الأقل دقة فيربح أكثر إن صوّب نحو منطقة أكبر.</p><p>في بعض المراحل يُحتسب جزء من اللوحة فقط، وهو محدد بخط متقطع. في المباراة يرمي كل لاعب 3 سهام في كل جولة، أربع جولات، ويفوز من جمع نقاطاً أكثر. وعند التعادل يُلعب وقت إضافي.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -2485,10 +2612,246 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   };
 })();
 
+/* ===== src/dart_ui.js ===== */
+'use strict';
+/* חצים — שלבים (חוקים שונים), מול המחשב, שניים בטלפון (מסך מפוצל), אונליין. המנוע: Dart.
+   החץ נוחת ב: כוונה + נדנוד היד (נרגע כשמחזיקים, חוזר כשמחזיקים יותר מדי) + רעש קטן, הכול דטרמיניסטי לפי (זרע, צד, מספר חץ). */
+(function () {
+  const E = Dart, LV = E.makeLevels();
+  const VW = 10, BR = 4.05, TEAM = ['#4f8be8', '#e8584f'], OFF = 1.8;
+  let CROWD = null;
+  function sparkle() { if (CROWD) return CROWD; const R = E.prng(55); CROWD = []; for (let i = 0; i < 70; i++) CROWD.push({ x: R() * VW, y: R() * 16, r: 0.03 + R() * 0.05 }); return CROWD; }
+  const zoneName = h => h.zone === 'miss' ? '' : h.zone === 'bull' ? '50' : h.zone === 'obull' ? '25' : (h.zone === 'tri' ? 'T' : h.zone === 'dbl' ? 'D' : '') + h.num;
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botLvl = cfg.mode === 'cpu' ? cfg.lv : 0;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0;
+      this.i = 0; this.sc = [0, 0]; this.rt = [[], []]; this.cur = 0; this.stuck = []; this.Rb = E.prng(this.seed * 5 + 1); this.queued = {};
+      this.rule = this.lv ? this.lv.rule : { k: 'all' }; this.w = this.lv ? this.lv.w : 1;
+      this.state = this.net ? 'count' : 'prep'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.resT = 0; this.fl = null; this.pop = null;
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+      if (this.state === 'prep') this.beginDart();
+    }
+    thrower() { return this.mode === 'solo' ? 0 : E.throwerOf(this.i); }
+    mine() { return this.mode === 'two' ? [0, 1] : this.net ? [this.me] : [0]; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    ctx(i, side) { return { seed: this.seed, side, i, w: this.w, rule: this.rule }; }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views ${two ? 'duo' : 'one'}">${two ? '<div class="pv top"><canvas></canvas></div>' : ''}<div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center"></div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el);
+      this.views = $$('.pv', el).map(box => { const side = two ? (box.classList.contains('top') ? 1 : 0) : (this.net ? this.me : 0); return { box, cv: $('canvas', box), side, rot: two && side === 1, cs: 10, vh: 14, ctx: null, aim: null, charging: false, t0: 0 }; });
+      this.views.forEach(v => this.bindInput(v));
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      this.views.forEach(v => {
+        const r = v.box.getBoundingClientRect(); v.cs = Math.max(8, Math.min((r.width - 2) / VW, (r.height - 2) / 14)); v.vh = Math.max(14, Math.min(17.5, (r.height - 2) / v.cs)); const d = Math.min(window.devicePixelRatio || 1, 2), w = VW * v.cs, h = v.vh * v.cs;
+        v.cv.width = Math.round(w * d); v.cv.height = Math.round(h * d); v.cv.style.width = w + 'px'; v.cv.style.height = h + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+      });
+    }
+    cy(v) { return 6.35 + (v.vh - 14) * 0.3; }
+    toBoard(v, p) { return { x: (p.x - 5) / BR, y: -(p.y - this.cy(v)) / BR }; }
+    /* ---------- input ---------- */
+    local(v, e) { const r = v.cv.getBoundingClientRect(); let x = e.clientX - r.left, y = e.clientY - r.top; if (v.rot) { x = r.width - x; y = r.height - y; } return { x: x / v.cs, y: y / v.cs }; }
+    canAct(v) { return this.state === 'prep' && !this.paused && this.mine().includes(v.side) && this.thrower() === v.side && !this.botIn; }
+    bindInput(v) {
+      const upd = e => { const p = this.local(v, e); v.aim = E.clampAim(this.toBoard(v, { x: p.x, y: p.y - OFF })); };
+      v.cv.addEventListener('pointerdown', e => { e.preventDefault(); if (!this.canAct(v)) return; try { v.cv.setPointerCapture(e.pointerId); } catch (x) {} upd(e); v.charging = true; v.t0 = performance.now(); SFX.tap(); });
+      v.cv.addEventListener('pointermove', e => { if (!v.charging || !this.canAct(v)) return; upd(e); });
+      const up = e => { if (!v.charging) return; v.charging = false; if (!this.canAct(v)) return; upd(e); this.throwDart(v.side, { x: v.aim.x, y: v.aim.y }, (performance.now() - v.t0) / 1000); };
+      v.cv.addEventListener('pointerup', up); v.cv.addEventListener('pointercancel', () => { v.charging = false; }); v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    /* ---------- dart flow ---------- */
+    beginDart() {
+      this.state = 'prep'; this.fl = null; this.pop = null; const s = this.thrower();
+      this.views.forEach(v => { v.charging = false; });
+      if (this.mode === 'cpu' && s === 1) { const bd = E.botDart(this.botLvl, this.ctx(this.i, 1), this.Rb); this.bot = bd; this.botT = 0; this.botIn = 0.7 + Math.min(1.6, bd.hold); } else { this.botIn = null; this.bot = null; }
+      this.autoIn = this.net && s === this.me ? 15 : null;
+      const mine = this.mine().includes(s); this.msg.textContent = this.mode === 'two' ? T('dart_two_help') : (mine ? T('dart_help') : T('dart_wait'));
+      const q = this.queued[this.i]; if (q) { delete this.queued[this.i]; this.onMessage(q); }
+    }
+    throwDart(side, aim, hold) {
+      if (this.state !== 'prep' || this.thrower() !== side || !this.mine().includes(side)) return;   // only the thrower may throw
+      aim = E.clampAim(aim); hold = Math.max(0, Math.min(4, hold)); this.go(side, aim, hold);
+      if (this.net && side === this.me) Net.link.send({ type: 'dart', i: this.i, ax: aim.x, ay: aim.y, hold });
+    }
+    go(side, aim, hold) {
+      const out = E.land(aim, hold, this.ctx(this.i, side)); this.fl = { t: 0, T: out.T, out, side, aim }; this.state = 'fly'; this.botIn = null; this.autoIn = null; this.msg.textContent = ''; SFX.hit(); vib(12);
+    }
+    land() {
+      const f = this.fl, o = f.out, s = f.side; this.sc[s] += o.pts; this.stuck.push({ x: o.x, y: o.y, side: s, pts: o.pts, zone: o.hit.zone }); const ri = this.mode === 'solo' ? Math.floor(this.i / E.PER) : E.roundOf(this.i); this.rt[s][ri] = (this.rt[s][ri] || 0) + o.pts;
+      this.state = 'stick'; this.resT = 0.95; this.pop = { t: 0, o, s };
+      if (o.pts >= 50 || o.hit.zone === 'tri' && o.pts) { SFX.win(); vib(30); } else if (o.pts) SFX.lock(); else SFX.lose();
+    }
+    advance() {
+      const done = this.i + 1; let end = null;
+      if (this.mode === 'solo') { const st = E.levelState(this.lv, this.sc[0], done); if (st.done) end = st; }
+      else if (done % (E.PER * 2) === 0) { const d = E.decided(this.sc, done / (E.PER * 2)); if (d !== null) end = { res: d }; }
+      if (end) { this.state = 'end'; setTimeout(() => this.finish(end), 400); return; }
+      this.i++; if (this.i % E.PER === 0) { this.state = 'turn'; this.resT = 1.0; this.msg.textContent = ''; return; }
+      this.beginDart();
+    }
+    onMessage(m) {
+      if (m.type === 'dart') {
+        const s = E.throwerOf(m.i);
+        if (m.i === this.i && this.state === 'prep' && s !== this.me && this.thrower() === s) this.go(s, E.clampAim({ x: m.ax, y: m.ay }), Math.max(0, Math.min(4, +m.hold || 0)));
+        else if (m.i >= this.i && this.state !== 'end' && this.state !== 'fin') this.queued[m.i] = m;
+      } else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('dart'); let html = '', btns = '';
+      if (m === 'solo') {
+        const win = !!end.win, n = this.lv.n;
+        if (win) { if (end.stars > (st.lv[n] || 0)) st.lv[n] = end.stars; st.games++; st.wins++; saveP(); Meta.after('dart', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(end.stars)}${'☆'.repeat(3 - end.stars)}</div><p>🎯 ${this.sc[0]}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('dart', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>🎯 ${this.sc[0]}/${this.lv.goal}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (r === 'draw') title = T('draw'); else if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('dart', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('dart', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>🎯 ${this.sc[0]} : ${this.sc[1]}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; this.paused = true; const online = this.net;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      if (!this.paused) {
+        if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.beginDart(); SFX.go(); } }
+        else if (this.state === 'prep') {
+          if (this.botIn != null && this.bot) { this.botT += dt; if (this.botT >= this.botIn) { const b = this.bot; this.bot = null; this.botIn = null; this.go(1, b.aim, b.hold); } }
+          if (this.autoIn != null) { this.autoIn -= dt; if (this.autoIn <= 0) { this.autoIn = null; const v = this.views[0]; this.throwDart(this.me, v.aim || { x: 0, y: 0 }, 0.2); } }
+        }
+        else if (this.state === 'fly') { this.fl.t += dt; if (this.fl.t >= this.fl.T) this.land(); }
+        else if (this.state === 'stick') { this.pop.t += dt; this.resT -= dt; if (this.resT <= 0) this.advance(); }
+        else if (this.state === 'turn') { this.resT -= dt; if (this.resT <= 0) { this.stuck = []; this.beginDart(); } }
+      }
+      this.t += dt; this.draw(); this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    /* ---------- drawing ---------- */
+    draw() { this.views.forEach(v => { if (v.ctx) this.drawView(v); }); this.stat(); }
+    ruleText() { const r = this.rule; return r.k === 'num' ? T('dart_r_num', { n: r.n }) : T('dart_r_' + r.k); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return;
+      if (this.mode === 'solo') st.innerHTML = `<span>🎯 ${this.sc[0]}/${this.lv.goal}<small>${T('dart_need', { n: this.lv.goal })}</small></span><span>${Math.min(this.i + (this.state === 'prep' || this.state === 'fly' ? 1 : 0), this.lv.darts)}/${this.lv.darts}<small>${T('dart_dart')}</small></span><span>${this.rule.k === 'all' ? '·' : '🎯'}<small>${this.rule.k === 'all' ? ' ' : this.ruleText()}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">🎯 ${this.sc[0]}<small>${esc(this.nameOf(0))}</small></span><span>${Math.min(E.roundOf(this.i) + 1, 99) > E.ROUNDS ? T('dart_sd') : (E.roundOf(this.i) + 1) + '/' + E.ROUNDS}<small>${T('dart_round')}</small></span><span style="color:${TEAM[1]}">🎯 ${this.sc[1]}<small>${esc(this.nameOf(1))}</small></span>`;
+    }
+    wedge(c, cx, cy, r0, r1, a0, a1) { c.beginPath(); c.arc(cx, cy, r1, a0, a1); c.arc(cx, cy, r0, a1, a0, true); c.closePath(); }
+    drawBoard(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, cx = X(5), cy = Y(this.cy(v)), R = BR * cs; c.save();
+      c.fillStyle = '#15171c'; c.beginPath(); c.arc(cx, cy, R * 1.2, 0, 7); c.fill(); c.strokeStyle = 'rgba(255,255,255,.18)'; c.lineWidth = cs * 0.05; c.stroke();
+      for (let k = 0; k < 20; k++) {
+        const a0 = (k * 18 - 9 - 90) * Math.PI / 180, a1 = (k * 18 + 9 - 90) * Math.PI / 180, even = k % 2 === 0, base = even ? '#1d1f24' : '#efe3c4', ring = even ? '#d9433b' : '#2f9a58';
+        [[E.D0, E.D1, ring], [E.T1, E.D0, base], [E.T0, E.T1, ring], [E.ROB, E.T0, base]].forEach(z => { this.wedge(c, cx, cy, z[0] * R, z[1] * R, a0, a1); c.fillStyle = z[2]; c.fill(); });
+      }
+      c.beginPath(); c.arc(cx, cy, E.ROB * R, 0, 7); c.fillStyle = '#2f9a58'; c.fill(); c.beginPath(); c.arc(cx, cy, E.RB * R, 0, 7); c.fillStyle = '#d9433b'; c.fill();
+      c.strokeStyle = 'rgba(210,210,210,.55)'; c.lineWidth = Math.max(1, cs * 0.02); [E.RB, E.ROB, E.T0, E.T1, E.D0, E.D1].forEach(r => { c.beginPath(); c.arc(cx, cy, r * R, 0, 7); c.stroke(); });
+      for (let k = 0; k < 20; k++) { const a = (k * 18 - 9 - 90) * Math.PI / 180; c.beginPath(); c.moveTo(cx + Math.cos(a) * E.ROB * R, cy + Math.sin(a) * E.ROB * R); c.lineTo(cx + Math.cos(a) * E.D1 * R, cy + Math.sin(a) * E.D1 * R); c.stroke(); }
+      c.fillStyle = '#f4efe3'; c.font = `800 ${cs * 0.5}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; for (let k = 0; k < 20; k++) { const a = (k * 18 - 90) * Math.PI / 180; c.fillText(E.ORDER[k], cx + Math.cos(a) * R * 1.12, cy + Math.sin(a) * R * 1.12); }
+      // highlight what the rule counts
+      const rl = this.rule, hl = (r0, r1, a0, a1) => { c.save(); c.strokeStyle = '#ffd877'; c.lineWidth = cs * 0.09; c.setLineDash([cs * 0.25, cs * 0.15]); if (a0 == null) { c.beginPath(); c.arc(cx, cy, r1 * R, 0, 7); if (r0) { c.moveTo(cx + r0 * R, cy); c.arc(cx, cy, r0 * R, 0, 7); } c.stroke(); } else { this.wedge(c, cx, cy, r0 * R, r1 * R, a0, a1); c.stroke(); } c.restore(); };
+      if (rl.k === 'bull') hl(0, E.ROB); else if (rl.k === 'dbl') hl(E.D0, E.D1); else if (rl.k === 'tri') hl(E.T0, E.T1); else if (rl.k === 'num') { const k = E.ORDER.indexOf(rl.n); hl(E.ROB, E.D1, (k * 18 - 9 - 90) * Math.PI / 180, (k * 18 + 9 - 90) * Math.PI / 180); }
+      c.restore();
+    }
+    drawDart(c, cs, x, y, col, sc) {   // tip at (x,y) in px; the barrel leans to the upper right
+      const art = Art.get('dart-dart'); c.save(); c.translate(x, y); c.scale(sc, sc);
+      if (art) { c.drawImage(art, -cs * 0.12, -cs * 1.5, cs * 1.4, cs * 1.6); c.restore(); return; }
+      c.strokeStyle = '#cfd4dc'; c.lineWidth = cs * 0.09; c.lineCap = 'round'; c.beginPath(); c.moveTo(0, 0); c.lineTo(cs * 0.35, -cs * 0.7); c.stroke();
+      c.strokeStyle = '#6b7280'; c.lineWidth = cs * 0.16; c.beginPath(); c.moveTo(cs * 0.28, -cs * 0.56); c.lineTo(cs * 0.55, -cs * 1.1); c.stroke();
+      c.fillStyle = col; c.beginPath(); c.moveTo(cs * 0.55, -cs * 1.1); c.lineTo(cs * 0.95, -cs * 1.35); c.lineTo(cs * 0.72, -cs * 0.92); c.closePath(); c.fill(); c.beginPath(); c.moveTo(cs * 0.55, -cs * 1.1); c.lineTo(cs * 0.12, -cs * 1.5); c.lineTo(cs * 0.4, -cs * 0.95); c.closePath(); c.fill(); c.restore();
+    }
+    drawView(v) {
+      const c = v.ctx, cs = v.cs, vh = v.vh, X = x => x * cs, Y = y => y * cs, bgA = Art.get('bg-dart'), now = performance.now(), me = this.mine().includes(v.side), thr = this.thrower();
+      c.clearRect(0, 0, VW * cs, vh * cs); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, VW * cs, vh * cs, 14); c.clip();
+      if (bgA) c.drawImage(bgA, 0, 0, VW * cs, vh * cs);
+      else { const g = c.createLinearGradient(0, 0, 0, Y(vh)); g.addColorStop(0, '#2a1f33'); g.addColorStop(0.5, '#3a2a46'); g.addColorStop(1, '#25303f'); c.fillStyle = g; c.fillRect(0, 0, X(VW), Y(vh)); c.fillStyle = 'rgba(255,255,255,.35)'; sparkle().forEach(d => { c.beginPath(); c.arc(X(d.x), Y(d.y * vh / 16), d.r * cs, 0, 7); c.fill(); }); c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(0, Y(vh - 2.4), X(VW), Y(2.4)); }
+      this.drawBoard(c, cs, v); this.drawBoardHeader(c, cs, v);
+      // darts stuck in the board
+      this.stuck.forEach(d => this.drawDart(c, cs, X(5 + d.x * BR), Y(this.cy(v) - d.y * BR), TEAM[d.side], 1));
+      // flying dart
+      if (this.fl && this.state === 'fly') { const f = this.fl, p = Math.min(1, f.t / f.T), o = f.out, tx = X(5 + o.x * BR), ty = Y(this.cy(v) - o.y * BR), sx = X(5 + o.x * BR * 0.3), sy = Y(vh - 1.8), e = 1 - Math.pow(1 - p, 2.2); this.drawDart(c, cs, sx + (tx - sx) * e, sy + (ty - sy) * e - Math.sin(Math.PI * p) * cs * 0.6, TEAM[f.side], 1.5 - 0.5 * e); }
+      // aiming reticle (the thrower's own screen, or the bot's wobble)
+      if (this.state === 'prep') this.drawReticle(c, cs, v, now);
+      // score pop
+      if (this.pop) { const p = this.pop, k = Math.min(1, p.t * 4), o = p.o, x = X(5 + o.x * BR), y = Y(this.cy(v) - o.y * BR) - cs * (0.9 + 0.5 * k); c.save(); c.globalAlpha = Math.min(1, k * 2) * (p.t > 0.8 ? Math.max(0, 1 - (p.t - 0.8) * 5) : 1); c.font = `900 ${cs * 1.1}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.2; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.7)'; c.fillStyle = o.pts ? '#6dffa0' : '#ffd877'; const tx = o.hit.zone === 'miss' ? T('dart_miss') : (o.pts ? '+' + o.pts : '0') + (o.pts && zoneName(o.hit) && String(o.pts) !== zoneName(o.hit) ? ' ' + zoneName(o.hit) : ''); c.strokeText(tx, X(5), Y(this.cy(v)) - cs * 0.2); c.fillText(tx, X(5), Y(this.cy(v)) - cs * 0.2); c.restore(); }
+      // tray of darts left in this turn
+      this.drawTray(c, cs, v);
+      c.restore();
+    }
+    drawBoardHeader(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, two = this.mode === 'two'; c.fillStyle = 'rgba(8,14,24,.78)'; c.beginPath(); c.roundRect(X(1.0), Y(0.12), X(8.0), Y(1.2), cs * 0.25); c.fill(); c.textBaseline = 'middle';
+      if (this.mode === 'solo') { c.textAlign = 'center'; c.fillStyle = '#ffd877'; c.font = `800 ${cs * 0.55}px system-ui`; c.fillText('🎯 ' + this.sc[0] + ' / ' + this.lv.goal, X(5), Y(0.55)); c.fillStyle = '#fff'; c.font = `700 ${cs * 0.38}px system-ui`; c.fillText(this.ruleText(), X(5), Y(1.0)); }
+      else { const order = two ? [v.side, 1 - v.side] : [0, 1]; order.forEach((s, row) => { const y = Y(0.42 + row * 0.52), act = this.thrower() === s && this.state !== 'end'; c.textAlign = 'left'; c.fillStyle = TEAM[s]; c.font = `800 ${cs * 0.38}px system-ui`; c.fillText((act ? '▶ ' : '') + this.nameOf(s).slice(0, 7), X(1.25), y); c.textAlign = 'center'; c.fillStyle = '#c9d2e0'; const rr = this.rt[s]; c.fillText(rr.length ? '+' + rr[rr.length - 1] : '', X(5.6), y); c.textAlign = 'right'; c.fillStyle = '#fff'; c.font = `900 ${cs * 0.42}px system-ui`; c.fillText(this.sc[s], X(8.8), y); }); }
+    }
+    drawReticle(c, cs, v, now) {
+      const X = x => x * cs, Y = y => y * cs, s = this.thrower(); let aim = null, t = 0, ctx = this.ctx(this.i, s);
+      if (this.bot) { aim = this.bot.aim; t = Math.min(this.botT, this.bot.hold); }
+      else if (v.side === s && this.mine().includes(s)) { if (!v.aim) { c.fillStyle = 'rgba(255,255,255,.85)'; c.font = `700 ${cs * 0.55}px system-ui`; c.textAlign = 'center'; c.fillText('☝', X(5), Y(vh_(v) - 2.6)); return; } aim = v.aim; t = v.charging ? (now - v.t0) / 1000 : 0; }
+      else return;
+      const sw = E.sway(t, ctx), rx = X(5 + (aim.x + sw.dx) * BR), ry = Y(this.cy(v) - (aim.y + sw.dy) * BR), ax = X(5 + aim.x * BR), ay = Y(this.cy(v) - aim.y * BR);
+      c.save(); c.strokeStyle = 'rgba(255,255,255,.4)'; c.lineWidth = cs * 0.05; c.setLineDash([cs * 0.12, cs * 0.12]); c.beginPath(); c.arc(ax, ay, Math.max(cs * 0.15, E.amp(t, this.w) * BR * cs), 0, 7); c.stroke(); c.setLineDash([]);
+      c.strokeStyle = '#ffd877'; c.fillStyle = 'rgba(255,216,119,.2)'; c.lineWidth = cs * 0.07; c.beginPath(); c.arc(rx, ry, cs * 0.34, 0, 7); c.fill(); c.stroke(); c.beginPath(); c.moveTo(rx - cs * 0.55, ry); c.lineTo(rx + cs * 0.55, ry); c.moveTo(rx, ry - cs * 0.55); c.lineTo(rx, ry + cs * 0.55); c.stroke();
+      if (!this.bot && v.charging) { const gx = X(9.4), gy1 = Y(this.cy(v) + BR + 0.4), gh = Y(2 * BR * 0.7), a = E.amp(t, this.w) / (E.amp(0, this.w)), g = Math.max(0, Math.min(1, 1 - a)); c.fillStyle = 'rgba(0,0,0,.5)'; c.beginPath(); c.roundRect(gx - cs * 0.22, gy1 - gh, cs * 0.44, gh, cs * 0.22); c.fill(); c.fillStyle = g > 0.7 ? '#59d28a' : g > 0.4 ? '#f0c24b' : '#ff6b6b'; c.beginPath(); c.roundRect(gx - cs * 0.15, gy1 - cs * 0.07 - (gh - cs * 0.14) * g, cs * 0.3, (gh - cs * 0.14) * g, cs * 0.15); c.fill(); }
+      c.restore();
+    }
+    drawTray(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, vh = v.vh, used = this.i % E.PER, s = this.thrower();
+      for (let k = 0; k < E.PER; k++) { const x = X(5 + (k - 1) * 1.5), y = Y(vh - 1.1), on = this.state === 'prep' ? k >= used : k > used; c.save(); c.globalAlpha = on ? 1 : 0.28; this.drawDart(c, cs, x - cs * 0.25, y + cs * 0.55, TEAM[s], 0.9); c.restore(); }
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  const vh_ = v => v.vh;
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'dart'; setPlayBg('dart'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.dart = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#3a2a46"/><circle cx="45" cy="35" r="26" fill="#1d1f24" stroke="#ccc" stroke-width="1.5"/><circle cx="45" cy="35" r="20" fill="#efe3c4"/><circle cx="45" cy="35" r="15" fill="#d9433b"/><circle cx="45" cy="35" r="10" fill="#efe3c4"/><circle cx="45" cy="35" r="5" fill="#2f9a58"/><circle cx="45" cy="35" r="2" fill="#d9433b"/><path d="M52 23 63 8" stroke="#cfd4dc" stroke-width="2.5" stroke-linecap="round"/><path d="M63 8 70 5 66 13z M63 8 58 2 61 11z" fill="#e8584f"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'dart', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen', 'hoop'], GICON = { pen: '⚽', hoop: '🏀' };
+const GAME_IDS = ['pen', 'hoop', 'dart'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };

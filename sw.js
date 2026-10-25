@@ -20,7 +20,7 @@
 })();
 
 /* SportNest service worker — network-first for pages (never a bare error), cache-first for files */
-const VERSION = 'sportnest-v1';
+const VERSION = 'sportnest-1.2.0';
 const CORE = ['./', 'manifest.json', 'icon-192.png', 'icon-512.png', 'privacy_policy.html'];
 const ART = ["art/bg-pen.webp","art/pen-ball.webp","art/pen-dummy.webp","art/pen-keeper.webp","art/tile-pen.webp"];
 const ROOT = new URL('./', self.registration.scope).pathname;
