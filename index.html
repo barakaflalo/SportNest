@@ -168,6 +168,7 @@ input.txt:focus{border-color:var(--acc)}
 #play[data-bg=hoop]{background:linear-gradient(180deg,#26335a,#3b4f86 45%,#a96d33)}
 #play[data-bg=dart]{background:linear-gradient(180deg,#2a1f33,#3a2a46 50%,#25303f)}
 #play[data-bg=box]{background:linear-gradient(180deg,#1b1f33,#3a3350 50%,#34406a)}
+#play[data-bg=snk]{background:linear-gradient(180deg,#2a1a12,#3a2316 50%,#1d140e)}
 .pen-views{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
 .pen-views .pv{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
 .pen-views.duo .pv.top canvas{transform:rotate(180deg)}
@@ -186,7 +187,7 @@ input.txt:focus{border-color:var(--acc)}
 <div id="album" class="sc"></div>
 <div id="about" class="sc"></div>
 <script>
-const ART_FILES = ["bg-box","bg-dart","bg-hoop","bg-pen","box-head1","box-head2","dart-dart","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","tile-box","tile-dart","tile-hoop","tile-pen"];
+const ART_FILES = ["bg-box","bg-dart","bg-hoop","bg-pen","box-head1","box-head2","dart-dart","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-box","tile-dart","tile-hoop","tile-pen","tile-snk"];
 /* ===== src/nestlink.js ===== */
 /* =====================================================================
    NestLink 1.1 — AppNest online multiplayer module (WebRTC via PeerJS)
@@ -808,6 +809,178 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   function stars(lv, f) { if (decided(f) !== 0) return 0; const left = f.hp[0]; return left >= lv.s3 ? 3 : left >= lv.s2 ? 2 : 1; }
   const API = { ACTS, IDX, COST, MAXE, E0, HP0, MAXB, SUDDEN, DMG, prng, clamp, afford, legal, regen, newFight, step, decided, bot, predict, makeLevels, stars, SCRIPTS };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Box = API;
+})(typeof self !== 'undefined' ? self : this);
+
+/* ===== engines/snk.js ===== */
+/* SportNest — snooker-style engine (pure, deterministic).
+   A fixed time step (1/240 s) and only + - * / and sqrt (all exactly rounded by IEEE 754), so two phones that get the same
+   shot (vx, vy rounded to 3 decimals) compute exactly the same positions. No Math.random, no trig inside the simulation.
+   The rules are a friendly snooker: free choice of object ball, red 1 / yellow 2 / green 3 / blue 4 / black 5; a pot keeps the turn;
+   a miss or foul passes it (foul = no ball touched or the white potted: opponent +2, potted balls go back to their spots). */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const W = 20, H = 10, BR = 0.3, DT = 1 / 240, VMAX = 26, VMIN = 2.5, MU = 1.7, DAMP = 0.15, E_BALL = 0.96, E_WALL = 0.78, STOP = 0.03, MAXSTEPS = 240 * 22;
+  const PK = [[0, 0, 0.64], [W / 2, 0, 0.58], [W, 0, 0.64], [0, H, 0.64], [W / 2, H, 0.58], [W, H, 0.64]];     // pocket centre + capture radius
+  const CUE0 = [4.0, 5.0], FOUL = 2, MAXSHOTS = 60;
+  const COLORS = { 1: 'red', 2: 'yellow', 3: 'green', 4: 'blue', 5: 'black' };
+  /* ---------- table state: index 0 is the white ---------- */
+  function make(balls, cue) {   // balls: [{x, y, v}] object balls
+    const n = balls.length + 1, s = { n, x: new Float64Array(n), y: new Float64Array(n), vx: new Float64Array(n), vy: new Float64Array(n), on: new Uint8Array(n), val: new Uint8Array(n), hx: new Float64Array(n), hy: new Float64Array(n) };
+    s.x[0] = (cue || CUE0)[0]; s.y[0] = (cue || CUE0)[1]; s.on[0] = 1;
+    balls.forEach((b, i) => { s.x[i + 1] = b.x; s.y[i + 1] = b.y; s.hx[i + 1] = b.x; s.hy[i + 1] = b.y; s.val[i + 1] = b.v; s.on[i + 1] = 1; });
+    return s;
+  }
+  const clone = s => ({ n: s.n, x: Float64Array.from(s.x), y: Float64Array.from(s.y), vx: Float64Array.from(s.vx), vy: Float64Array.from(s.vy), on: Uint8Array.from(s.on), val: s.val, hx: s.hx, hy: s.hy });
+  function rack() {      // the standard friendly rack: 6 reds in a triangle, four colours
+    const out = [], x0 = 13.0, dx = 0.53, dy = 0.62;
+    for (let r = 0; r < 3; r++) for (let k = 0; k <= r; k++) out.push({ x: x0 + r * dx, y: H / 2 + (k - r / 2) * dy, v: 1 });
+    out.push({ x: 3.0, y: 2.6, v: 2 }, { x: 3.0, y: 7.4, v: 3 }, { x: 10.0, y: 5.0, v: 4 }, { x: 17.6, y: 5.0, v: 5 });
+    return out;
+  }
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7071, 0.7071], [-0.7071, 0.7071], [0.7071, -0.7071], [-0.7071, -0.7071]];
+  function freeSpot(s, x, y, skip) {   // nearest free place for a ball (deterministic spiral over fixed directions)
+    const free = (px, py) => { if (px < BR + 0.05 || px > W - BR - 0.05 || py < BR + 0.05 || py > H - BR - 0.05) return false; for (let i = 0; i < s.n; i++) { if (i === skip || !s.on[i]) continue; const dx = s.x[i] - px, dy = s.y[i] - py; if (dx * dx + dy * dy < (2 * BR + 0.02) * (2 * BR + 0.02)) return false; } for (const p of PK) { const dx = p[0] - px, dy = p[1] - py; if (dx * dx + dy * dy < (p[2] + BR) * (p[2] + BR)) return false; } return true; };
+    if (free(x, y)) return [x, y];
+    for (let k = 1; k < 40; k++) for (const d of DIRS) { const px = x + d[0] * k * 0.2, py = y + d[1] * k * 0.2; if (free(px, py)) return [px, py]; }
+    return [x, y];
+  }
+  /* ---------- physics ---------- */
+  function step(s, ev) {          // one fixed step; ev (optional) collects {first, potted}; returns number of moving balls
+    const n = s.n, x = s.x, y = s.y, vx = s.vx, vy = s.vy, on = s.on; let moving = 0;
+    for (let i = 0; i < n; i++) {
+      if (!on[i]) continue; let ax = vx[i], ay = vy[i], sp2 = ax * ax + ay * ay;
+      if (sp2 === 0) continue;
+      let sp = Math.sqrt(sp2); const ns = Math.max(0, sp - MU * DT) * (1 - DAMP * DT);
+      if (ns < STOP) { vx[i] = 0; vy[i] = 0; continue; }
+      const f = ns / sp; ax *= f; ay *= f; vx[i] = ax; vy[i] = ay; x[i] += ax * DT; y[i] += ay * DT; moving++;
+      // pockets first (the ball drops before it can bounce off the jaws)
+      for (let k = 0; k < 6; k++) { const p = PK[k], dx = p[0] - x[i], dy = p[1] - y[i]; if (dx * dx + dy * dy < p[2] * p[2]) { on[i] = 0; vx[i] = 0; vy[i] = 0; if (ev) ev.potted.push(i); break; } }
+      if (!on[i]) continue;
+      if (x[i] < BR) { x[i] = BR; vx[i] = -vx[i] * E_WALL; } else if (x[i] > W - BR) { x[i] = W - BR; vx[i] = -vx[i] * E_WALL; }
+      if (y[i] < BR) { y[i] = BR; vy[i] = -vy[i] * E_WALL; } else if (y[i] > H - BR) { y[i] = H - BR; vy[i] = -vy[i] * E_WALL; }
+    }
+    const D2 = 4 * BR * BR;
+    for (let i = 0; i < n; i++) {
+      if (!on[i]) continue;
+      for (let j = i + 1; j < n; j++) {
+        if (!on[j]) continue; const mi = vx[i] !== 0 || vy[i] !== 0, mj = vx[j] !== 0 || vy[j] !== 0; if (!mi && !mj) continue;
+        const dx = x[j] - x[i], dy = y[j] - y[i], d2 = dx * dx + dy * dy; if (d2 >= D2 || d2 === 0) continue;
+        const d = Math.sqrt(d2), nx = dx / d, ny = dy / d, vn = (vx[i] - vx[j]) * nx + (vy[i] - vy[j]) * ny;
+        if (ev && ev.first < 0 && (i === 0 || j === 0)) ev.first = i === 0 ? j : i;
+        if (vn > 0) { const J = (1 + E_BALL) / 2 * vn; vx[i] -= J * nx; vy[i] -= J * ny; vx[j] += J * nx; vy[j] += J * ny; }
+        const ov = (2 * BR - d) / 2; x[i] -= nx * ov; y[i] -= ny * ov; x[j] += nx * ov; y[j] += ny * ov;
+      }
+    }
+    return moving;
+  }
+  const qv = v => Math.round(v * 1000) / 1000;
+  function clampShot(vx, vy) { vx = +vx || 0; vy = +vy || 0; let sp = Math.sqrt(vx * vx + vy * vy); if (sp > VMAX) { vx = vx / sp * VMAX; vy = vy / sp * VMAX; sp = VMAX; } if (sp > 0 && sp < VMIN) { vx = vx / sp * VMIN; vy = vy / sp * VMIN; } return { vx: qv(vx), vy: qv(vy) }; }
+  function run(s, vx, vy) {       // plays one shot to the end; mutates s; returns the events
+    const c = clampShot(vx, vy), ev = { first: -1, potted: [], steps: 0 }; s.vx[0] = c.vx; s.vy[0] = c.vy;
+    for (let k = 0; k < MAXSTEPS; k++) { ev.steps = k; if (step(s, ev) === 0) break; }
+    for (let i = 0; i < s.n; i++) { s.vx[i] = 0; s.vy[i] = 0; }
+    return ev;
+  }
+  /* ---------- rules ---------- */
+  function newGame(balls) { return { s: make(balls), turn: 0, sc: [0, 0], shots: [0, 0], k: 0, log: [] }; }
+  function remaining(s) { let t = 0; for (let i = 1; i < s.n; i++) if (s.on[i]) t += s.val[i]; return t; }
+  function settle(g, ev) {      // applies the rules after a shot that was already simulated into g.s
+    const s = g.s, who = g.turn; let pts = 0, foul = false, cuePot = false;
+    const objs = ev.potted.filter(i => i !== 0); if (ev.potted.includes(0)) cuePot = true;
+    foul = ev.first < 0 || cuePot;
+    if (foul) { g.sc[1 - who] += FOUL; for (const i of objs) { const p = freeSpot(s, s.hx[i], s.hy[i], i); s.x[i] = p[0]; s.y[i] = p[1]; s.on[i] = 1; } }
+    else for (const i of objs) pts += s.val[i];
+    if (cuePot) { s.on[0] = 1; const p = freeSpot(s, CUE0[0], CUE0[1], 0); s.x[0] = p[0]; s.y[0] = p[1]; }
+    g.sc[who] += pts; g.shots[who]++; g.k++;
+    const keep = !foul && objs.length > 0; if (!keep) g.turn = 1 - who;
+    const r = { who, pts, foul, cuePot, potted: objs.length, keep, first: ev.first }; g.log.push(r); return r;
+  }
+  function shoot(g, vx, vy) { const ev = run(g.s, vx, vy); return settle(g, ev); }
+  function decided(g) {
+    if (remaining(g.s) === 0 || g.k >= MAXSHOTS) { const d = g.sc[0] - g.sc[1]; return d ? (d > 0 ? 0 : 1) : 'draw'; }
+    return null;
+  }
+  /* ---------- aim helper for the UI (a straight ray to the first ball or cushion; no physics) ---------- */
+  function aimRay(s, dx, dy) {
+    const L = Math.sqrt(dx * dx + dy * dy); if (!L) return null; dx /= L; dy /= L; const cx = s.x[0], cy = s.y[0]; let best = 1e9, hit = -1;
+    for (let i = 1; i < s.n; i++) { if (!s.on[i]) continue; const ox = s.x[i] - cx, oy = s.y[i] - cy, t = ox * dx + oy * dy; if (t <= 0) continue; const d2 = ox * ox + oy * oy - t * t, R2 = 4 * BR * BR; if (d2 > R2) continue; const tt = t - Math.sqrt(R2 - d2); if (tt < best && tt > 0) { best = tt; hit = i; } }
+    let tw = 1e9; if (dx > 0) tw = Math.min(tw, (W - BR - cx) / dx); if (dx < 0) tw = Math.min(tw, (BR - cx) / dx); if (dy > 0) tw = Math.min(tw, (H - BR - cy) / dy); if (dy < 0) tw = Math.min(tw, (BR - cy) / dy);
+    if (hit >= 0 && best < tw) { const gx = cx + dx * best, gy = cy + dy * best, nx = s.x[hit] - gx, ny = s.y[hit] - gy, nl = Math.sqrt(nx * nx + ny * ny) || 1; return { hit, gx, gy, nx: nx / nl, ny: ny / nl, t: best }; }
+    return { hit: -1, gx: cx + dx * tw, gy: cy + dy * tw, t: tw };
+  }
+  /* ---------- bots ---------- */
+  const SIG = [0, 0.1, 0.03, 0.016, 0.008];       // aiming error (radians, std) of bot level 1..4
+  function candidates(s) {
+    const out = [], cx = s.x[0], cy = s.y[0];
+    for (let b = 1; b < s.n; b++) {
+      if (!s.on[b]) continue;
+      for (let k = 0; k < 6; k++) {
+        const p = PK[k], bx = s.x[b], by = s.y[b], tx = p[0] - bx, ty = p[1] - by, tl = Math.sqrt(tx * tx + ty * ty); if (tl < 0.2) continue;
+        const gx = bx - tx / tl * 2 * BR, gy = by - ty / tl * 2 * BR, ax = gx - cx, ay = gy - cy, al = Math.sqrt(ax * ax + ay * ay); if (al < 0.05) continue;
+        const cut = (ax * tx + ay * ty) / (al * tl); if (cut < 0.2) continue;     // cut angle above ~78 degrees: skip
+        const sp = clamp(Math.sqrt(2 * MU * (al + 2.6 * tl)) + 2.4, 4, VMAX);
+        out.push({ vx: ax / al * sp, vy: ay / al * sp, b, k, cut, val: s.val[b] });
+      }
+    }
+    return out;
+  }
+  function trial(s, vx, vy, who) {   // value of a noiseless shot: potted points, minus a foul
+    const t = clone(s), ev = run(t, vx, vy); let pts = 0; const objs = ev.potted.filter(i => i !== 0); const foul = ev.first < 0 || ev.potted.includes(0);
+    if (foul) return -2.5; for (const i of objs) pts += s.val[i]; return pts;
+  }
+  function rot(vx, vy, a) { const c = Math.cos(a), sn = Math.sin(a); return [vx * c - vy * sn, vx * sn + vy * c]; }
+  function botShot(lvl, g, R) {
+    const s = g.s; let vx, vy;
+    const obj = []; for (let i = 1; i < s.n; i++) if (s.on[i]) obj.push(i);
+    if (lvl === 1) { const b = obj[(R() * obj.length) | 0], dx = s.x[b] - s.x[0], dy = s.y[b] - s.y[0], l = Math.sqrt(dx * dx + dy * dy) || 1, sp = 5 + R() * 14; vx = dx / l * sp; vy = dy / l * sp; }
+    else {
+      const cands = candidates(s); let best = null, bv = -1e9;
+      const score = c => { let v = trial(s, c.vx, c.vy); if (lvl >= 3) { v += 0.12 * c.cut; } return v; };
+      const pool = cands.map(c => ({ c, v: score(c) })).sort((a, b) => b.v - a.v);
+      if (lvl === 2) { const top = pool.slice(0, 4); const pick = top.length ? top[(R() * top.length) | 0] : null; best = pick && pick.v > 0 ? pick.c : null; }
+      else if (lvl === 3) best = pool.length ? pool[0].c : null;
+      else { let b4 = -1e9; for (const e of pool.slice(0, 4)) { let tot = e.v; for (const a of [-0.012, 0.012]) { const r = rot(e.c.vx, e.c.vy, a); tot += trial(s, r[0], r[1]); } if (tot > b4) { b4 = tot; best = e.c; } } }
+      if (!best || (pool.length && pool[0].v <= 0 && lvl >= 3)) {       // nothing pots: play safe at the nearest ball with a gentle shot
+        let nb = obj[0], nd = 1e9; for (const i of obj) { const dx = s.x[i] - s.x[0], dy = s.y[i] - s.y[0], d = dx * dx + dy * dy; if (d < nd) { nd = d; nb = i; } }
+        const dx = s.x[nb] - s.x[0], dy = s.y[nb] - s.y[0], l = Math.sqrt(dx * dx + dy * dy) || 1, sp = lvl >= 3 ? 4.5 : 8 + R() * 8; vx = dx / l * sp; vy = dy / l * sp;
+      } else { vx = best.vx; vy = best.vy; }
+    }
+    const a = gauss(R) * SIG[lvl], f = 1 + gauss(R) * 0.025 * lvl / 2, r = rot(vx, vy, a); return clampShot(r[0] * f, r[1] * f);
+  }
+  /* ---------- solo levels ---------- */
+  function layout(n) {
+    const world = ((n - 1) / 6) | 0, t = (n - 1) % 6, R = prng(7000 + n * 31), cnt = [3, 5, 7, 9][world] + (t >> 1), balls = [];
+    const vals = world === 0 ? [1, 1, 1, 1, 1, 1] : world === 1 ? [1, 1, 1, 2, 1, 2, 1, 2] : world === 2 ? [1, 2, 1, 3, 2, 1, 3, 2, 1, 3] : [1, 3, 2, 4, 1, 5, 3, 2, 4, 1, 5];
+    for (let i = 0, guard = 0; i < cnt && guard < 4000; guard++) {
+      let x, y; if (world === 0 && R() < 0.8) { const p = PK[(R() * 6) | 0], ux = p[0] === 0 ? 1 : p[0] === W ? -1 : (R() < 0.5 ? -0.5 : 0.5), uy = p[1] === 0 ? 1 : -1, d = 1.6 + R() * 2.6; x = p[0] + ux * d * (0.6 + R() * 0.6); y = p[1] + uy * d * (0.6 + R() * 0.5); } else { x = 1.2 + R() * (W - 2.4); y = 1.2 + R() * (H - 2.4); }
+      if (x < 1 || x > W - 1 || y < 1 || y > H - 1) continue; let ok = true;
+      for (const p of PK) { const dx = p[0] - x, dy = p[1] - y; if (dx * dx + dy * dy < 1.1 * 1.1) ok = false; } { const dx = CUE0[0] - x, dy = CUE0[1] - y; if (dx * dx + dy * dy < 1.5 * 1.5) ok = false; }
+      for (const b of balls) { const dx = b.x - x, dy = b.y - y; if (dx * dx + dy * dy < 1.0 * 1.0) ok = false; }
+      if (ok) { balls.push({ x, y, v: vals[i % vals.length] }); i++; }
+    }
+    return balls;
+  }
+  const FR = [0.34, 0.46, 0.52, 0.58], SF = [2.9, 2.2, 1.9, 1.7], SFT = [0.12, 0.1, 0.08, 0.06];
+  function makeLevels() {
+    const out = [];
+    for (let n = 1; n <= 24; n++) {
+      const world = ((n - 1) / 6) | 0, t = (n - 1) % 6, balls = layout(n), tot = balls.reduce((a, b) => a + b.v, 0), shots = Math.max(5, Math.round(balls.length * (SF[world] - SFT[world] * t)));
+      const goal = Math.max(2, Math.round(tot * (FR[world] + 0.04 * t)));
+      out.push({ n, balls, shots, goal, s3: Math.max(2, Math.round(shots * 0.55)), s2: Math.max(3, Math.round(shots * 0.8)), tot, seed: 7000 + n * 31 });
+    }
+    return out;
+  }
+  function levelState(lv, g) {      // g: game with sc[0], shots[0]
+    const pts = g.sc[0], k = g.shots[0];
+    if (pts >= lv.goal) return { done: true, win: true, stars: k <= lv.s3 ? 3 : k <= lv.s2 ? 2 : 1 };
+    if (k >= lv.shots || remaining(g.s) === 0) return { done: true, win: false, stars: 0 };
+    return { done: false };
+  }
+  const API = { W, H, BR, DT, VMAX, VMIN, PK, CUE0, FOUL, MAXSHOTS, COLORS, SIG, prng, gauss, clamp, make, clone, rack, freeSpot, step, run, clampShot, qv, newGame, remaining, settle, shoot, decided, aimRay, candidates, trial, botShot, layout, makeLevels, levelState };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Snk = API;
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/i18n.js ===== */
@@ -1898,10 +2071,38 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_snk.js ===== */
+/* SportNest — Snooker strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_snk: 'סנוקר', d_snk: 'מכוונים, מושכים ומקבעים כדורים בכיסים',
+      snk_help: 'גררו על השולחן לכיוון ההפוך מהכדור שאתם רוצים לשלוח. ככל שמושכים יותר הכוח גדול יותר. שחררו כדי להכות', snk_help_two: 'כל שחקן מכה בתורו מהצד שלו של הטלפון', snk_wait: 'ממתין למכה של היריב…', snk_think: 'היריב מכוון…',
+      snk_turn: 'התור של {n}', snk_foul: 'פסילה! {n} מקבל 2', snk_miss: 'החטאה', snk_need: 'צריך {n} נקודות', snk_shot: 'מכה', snk_left: 'נשארו {n}',
+      ru_snk: '<p>שולחן עם שישה כיסים, כדור לבן, שישה כדורים אדומים ועוד ארבעה צבעוניים. כדור אדום שווה נקודה, צהוב 2, ירוק 3, כחול 4 ושחור 5. אפשר לבחור כל כדור, בלי סדר קבוע.</p><p>כדי להכות גוררים על המסך בכיוון ההפוך מהמקום שאליו רוצים לשלוח את הכדור הלבן, כמו בקלע. קו הכוונה מראה לאן הכדור ילך עד שיפגע, וככל שגוררים רחוק יותר המכה חזקה יותר. עדיף לגרור רחוק כשרוצים דיוק, כי אז זווית קטנה של האצבע משנה פחות.</p><p>מי שמכניס כדור לכיס מקבל את ערכו וממשיך לשחק. מכה שלא הכניסה כלום מעבירה את התור. פסילה היא מכה שבה הכדור הלבן לא פגע בשום דבר או שנפל לכיס: היריב מקבל 2 נקודות, הכדורים שנכנסו לכיס חוזרים למקומם והלבן חוזר לנקודת ההתחלה.</p><p>במשחק מול יריב המשחק נגמר כשכל הכדורים בכיסים או אחרי 60 מכות, ומי שצבר יותר נקודות מנצח. בשלבים יש מספר מכות מוגבל ויעד נקודות. כמה פחות מכות שנדרשו, כך יותר כוכבים.</p>' },
+    en: { g_snk: 'Snooker', d_snk: 'Aim, pull back and pot the balls',
+      snk_help: 'Drag on the table away from where you want the white ball to go. The farther you pull, the harder the shot. Release to strike', snk_help_two: 'Each player strikes on their turn from their own side of the phone', snk_wait: 'Waiting for the opponent’s shot…', snk_think: 'The opponent is aiming…',
+      snk_turn: '{n}’s turn', snk_foul: 'Foul! {n} gets 2', snk_miss: 'Miss', snk_need: 'Need {n} points', snk_shot: 'Shot', snk_left: '{n} left',
+      ru_snk: '<p>A table with six pockets, a white ball, six red balls and four coloured ones. A red is worth 1, yellow 2, green 3, blue 4 and black 5. You may choose any ball, in any order.</p><p>To strike, drag on the screen away from where you want the white ball to go, like a slingshot. The aiming line shows where the ball will travel until it hits something, and the farther you drag the harder the shot. Drag far when you want accuracy, because then a small movement of the finger changes the angle less.</p><p>Pot a ball and you score its value and keep the turn. A shot that pots nothing passes the turn. A foul is a shot where the white touches nothing or drops into a pocket: the opponent gets 2 points, potted balls go back to their spots and the white returns to its starting place.</p><p>Against an opponent the match ends when every ball is potted or after 60 shots, and the higher score wins. In levels you have a limited number of shots and a points target. The fewer shots you need, the more stars you get.</p>' },
+    ru: { g_snk: 'Снукер', d_snk: 'Цельтесь, оттягивайте и забивайте шары',
+      snk_help: 'Тяните по столу в сторону, противоположную той, куда должен идти белый шар. Чем дальше тянете, тем сильнее удар. Отпустите, чтобы ударить', snk_help_two: 'Каждый игрок бьёт в свой ход со своей стороны телефона', snk_wait: 'Ждём удар соперника…', snk_think: 'Соперник целится…',
+      snk_turn: 'Ход: {n}', snk_foul: 'Фол! {n} получает 2', snk_miss: 'Мимо', snk_need: 'Нужно очков: {n}', snk_shot: 'Удар', snk_left: 'Осталось {n}',
+      ru_snk: '<p>Стол с шестью лузами, белый шар, шесть красных и четыре цветных. Красный стоит 1 очко, жёлтый 2, зелёный 3, синий 4, чёрный 5. Можно выбирать любой шар в любом порядке.</p><p>Чтобы ударить, тяните по экрану в сторону, противоположную той, куда должен лететь белый шар, как в рогатке. Линия прицела показывает путь шара до первого столкновения, а чем дальше тянете, тем сильнее удар. Для точности тяните подальше: тогда небольшое движение пальца меньше меняет угол.</p><p>Забили шар: получаете его очки и бьёте снова. Удар без забитых шаров передаёт ход. Фол: белый ни к чему не прикоснулся или упал в лузу. Соперник получает 2 очка, забитые шары возвращаются на места, белый встаёт на стартовую точку.</p><p>В матче игра заканчивается, когда все шары забиты или после 60 ударов, побеждает тот, у кого больше очков. В уровнях ограничено число ударов и задана цель по очкам. Чем меньше ударов нужно, тем больше звёзд.</p>' },
+    es: { g_snk: 'Snooker', d_snk: 'Apunta, tira hacia atrás y mete las bolas',
+      snk_help: 'Arrastra por la mesa en sentido contrario a donde quieres que vaya la bola blanca. Cuanto más tires, más fuerte el golpe. Suelta para golpear', snk_help_two: 'Cada jugador golpea en su turno desde su lado del teléfono', snk_wait: 'Esperando el golpe del rival…', snk_think: 'El rival está apuntando…',
+      snk_turn: 'Turno de {n}', snk_foul: '¡Falta! {n} recibe 2', snk_miss: 'Fallo', snk_need: 'Necesitas {n} puntos', snk_shot: 'Golpe', snk_left: 'Quedan {n}',
+      ru_snk: '<p>Una mesa con seis troneras, una bola blanca, seis rojas y cuatro de colores. La roja vale 1, la amarilla 2, la verde 3, la azul 4 y la negra 5. Puedes elegir cualquier bola, en cualquier orden.</p><p>Para golpear, arrastra por la pantalla en sentido contrario a donde quieres que vaya la blanca, como una honda. La línea de puntería muestra el camino de la bola hasta que choca, y cuanto más arrastras, más fuerte es el golpe. Arrastra lejos si quieres precisión, porque así un pequeño movimiento del dedo cambia menos el ángulo.</p><p>Si metes una bola sumas su valor y sigues jugando. Un golpe sin embocar nada pasa el turno. Es falta si la blanca no toca nada o cae en una tronera: el rival recibe 2 puntos, las bolas embocadas vuelven a su sitio y la blanca vuelve al punto de salida.</p><p>Contra un rival la partida acaba cuando todas las bolas están embocadas o tras 60 golpes, y gana quien tenga más puntos. En los niveles hay un número limitado de golpes y un objetivo de puntos. Cuantos menos golpes necesites, más estrellas.</p>' },
+    ar: { g_snk: 'سنوكر', d_snk: 'صوّب واسحب وأدخل الكرات في الجيوب',
+      snk_help: 'اسحب على الطاولة في الاتجاه المعاكس لمكان ذهاب الكرة البيضاء. كلما سحبت أكثر زادت قوة الضربة. أفلت لتضرب', snk_help_two: 'كل لاعب يضرب في دوره من جهته من الهاتف', snk_wait: 'بانتظار ضربة الخصم…', snk_think: 'الخصم يصوّب…',
+      snk_turn: 'دور {n}', snk_foul: 'خطأ! {n} يحصل على 2', snk_miss: 'أخطأت', snk_need: 'تحتاج {n} نقطة', snk_shot: 'ضربة', snk_left: 'تبقّى {n}',
+      ru_snk: '<p>طاولة بستة جيوب، وكرة بيضاء، وست كرات حمراء وأربع ملونة. الحمراء بنقطة، والصفراء بنقطتين، والخضراء بثلاث، والزرقاء بأربع، والسوداء بخمس. يمكنك اختيار أي كرة وبأي ترتيب.</p><p>للضرب اسحب على الشاشة في الاتجاه المعاكس لمكان ذهاب الكرة البيضاء، كالمقلاع. يُظهر خط التصويب مسار الكرة حتى تصطدم بشيء، وكلما سحبت أبعد كانت الضربة أقوى. اسحب بعيداً عندما تريد الدقة، لأن حركة صغيرة من الإصبع تغيّر الزاوية عندها بدرجة أقل.</p><p>إذا أدخلت كرة تحصل على قيمتها وتواصل اللعب. ضربة لا تُدخل شيئاً تمرّر الدور. الخطأ هو ضربة لا تلمس فيها البيضاء شيئاً أو تسقط في جيب: يحصل الخصم على نقطتين، وتعود الكرات المُدخلة إلى أماكنها وتعود البيضاء إلى نقطة البداية.</p><p>أمام خصم تنتهي المباراة عندما تدخل كل الكرات أو بعد 60 ضربة، ويفوز صاحب النقاط الأكثر. في المراحل عدد الضربات محدود وهناك هدف من النقاط. كلما احتجت ضربات أقل نلت نجوماً أكثر.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.4.1';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -3221,10 +3422,227 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   };
 })();
 
+/* ===== src/snk_ui.js ===== */
+'use strict';
+/* סנוקר — שלבים, מול המחשב, שניים בטלפון (מסך מפוצל, שולחן לרוחב), אונליין. המנוע: Snk.
+   המכה היא וקטור מהירות (vx, vy) מעוגל לשלוש ספרות. שני הטלפונים מריצים את אותה פיזיקה בצעדים קבועים ומגיעים לאותם מיקומים.
+   רק מי שהתור שלו שולח מכה; הודעה מחוץ לתור נחסמת בתוך הפונקציה. */
+(function () {
+  const E = Snk, LV = E.makeLevels(), M = 0.9, TEAM = ['#4f8be8', '#e8584f'], MAXDRAG = 6.0;
+  const BCOL = { 0: ['#ffffff', '#c9ced8'], 1: ['#e0382f', '#8e1511'], 2: ['#f2d138', '#a8890d'], 3: ['#2fa65a', '#145d30'], 4: ['#3b78e0', '#183f8c'], 5: ['#2a2d35', '#08090c'] };
+  const STEPS_PER_FRAME = 40;
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botLvl = cfg.mode === 'cpu' ? cfg.lv : 0;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0;
+      this.g = E.newGame(this.lv ? this.lv.balls : E.rack()); this.Rb = E.prng(this.seed * 5 + 1); this.q = {}; this.spd = 1; this.ff = false;
+      this.state = this.net ? 'count' : 'prep'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.acc = 0; this.ev = null; this.drops = []; this.note = null; this.aim = null; this.botAim = null; this.resT = 0;
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+      if (this.state === 'prep') this.beginTurn();
+    }
+    mine() { return this.mode === 'two' ? [this.g.turn] : this.net ? [this.me] : [0]; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views ${two ? 'duo' : 'one'}">${two ? '<div class="pv top"><canvas></canvas></div>' : ''}<div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center"></div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el);
+      this.views = $$('.pv', el).map(box => { const side = two ? (box.classList.contains('top') ? 1 : 0) : (this.net ? this.me : 0); return { box, cv: $('canvas', box), side, rot: two && side === 1, land: two, cs: 10, cw: 20, ch: 12, ctx: null, drag: null }; });
+      this.views.forEach(v => this.bindInput(v));
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      this.views.forEach(v => {
+        const r = v.box.getBoundingClientRect(), uw = (v.land ? E.W : E.H) + 2 * M, uh = (v.land ? E.H : E.W) + 2 * M; v.cs = Math.max(6, Math.min((r.width - 2) / uw, (r.height - 2) / uh)); v.cw = uw * v.cs; v.ch = uh * v.cs;
+        const d = Math.min(window.devicePixelRatio || 1, 2); v.cv.width = Math.round(v.cw * d); v.cv.height = Math.round(v.ch * d); v.cv.style.width = v.cw + 'px'; v.cv.style.height = v.ch + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+      });
+    }
+    // world (x along the long side, y across) <-> canvas units. Portrait: the white ball is at the bottom. Landscape (two on one phone): x runs right.
+    toC(v, x, y) { return v.land ? [M + x, M + y] : [M + y, M + E.W - x]; }
+    toW(v, u, w) { return v.land ? [u - M, w - M] : [E.W - (w - M), u - M]; }
+    /* ---------- input ---------- */
+    local(v, e) { const r = v.cv.getBoundingClientRect(); let x = e.clientX - r.left, y = e.clientY - r.top; if (v.rot) { x = r.width - x; y = r.height - y; } return { x: x / v.cs, y: y / v.cs }; }
+    canAct(v) { return this.state === 'prep' && !this.paused && this.mine().includes(v.side) && (this.mode === 'two' ? this.g.turn === v.side : true) && (this.mode !== 'cpu' && this.mode !== 'solo' ? true : this.g.turn === 0); }
+    shotOf(v, dxw, dyw) {      // the drag vector (in world units, from the finger back to the start) -> a shot
+      const l = Math.sqrt(dxw * dxw + dyw * dyw); if (l < 0.5) return null; const p = Math.min(1, l / MAXDRAG), sp = E.VMIN + (E.VMAX - E.VMIN) * p * p;   // quadratic: fine control for soft shots
+      return { vx: dxw / l * sp, vy: dyw / l * sp, p, l };
+    }
+    bindInput(v) {
+      v.cv.addEventListener('pointerdown', e => { e.preventDefault(); if (!this.canAct(v)) return; try { v.cv.setPointerCapture(e.pointerId); } catch (x) {} const p = this.local(v, e); v.drag = { s: this.toW(v, p.x, p.y), c: this.toW(v, p.x, p.y) }; this.aim = null; });
+      v.cv.addEventListener('pointermove', e => { if (!v.drag) return; const p = this.local(v, e); v.drag.c = this.toW(v, p.x, p.y); });
+      const up = () => { const d = v.drag; v.drag = null; if (!d || !this.canAct(v)) return; const sh = this.shotOf(v, d.s[0] - d.c[0], d.s[1] - d.c[1]); if (sh) this.shoot(v.side, sh.vx, sh.vy); };
+      v.cv.addEventListener('pointerup', up); v.cv.addEventListener('pointercancel', () => { v.drag = null; }); v.cv.oncontextmenu = e => e.preventDefault();
+      v.cv.addEventListener('pointerdown', () => { if (this.state === 'roll') this.ff = true; });
+    }
+    /* ---------- turn flow ---------- */
+    beginTurn() {
+      this.state = 'prep'; this.aim = null; this.botAim = null; this.resT = 0; const g = this.g;
+      if (this.mode === 'solo') g.turn = 0;
+      if (this.mode === 'cpu' && g.turn === 1) { const sh = E.botShot(this.botLvl, g, this.Rb); this.botAim = { vx: sh.vx, vy: sh.vy, t: 0, wait: (1.0 + this.Rb() * 0.8) * this.spd }; }
+      this.msg.textContent = this.mode === 'two' ? T('snk_help_two') : (this.mode === 'cpu' && g.turn === 1) ? T('snk_think') : this.net && g.turn !== this.me ? T('snk_wait') : T('snk_help');
+      if (this.net) { const q = this.q[g.k]; if (q) { delete this.q[g.k]; this.onMessage(q); } }
+    }
+    shoot(side, vx, vy, fromBot) {
+      if (this.state !== 'prep' || this.g.turn !== side) return;
+      if (!fromBot) { if (this.net && side !== this.me) return; if (this.mode !== 'two' && !this.net && side !== 0) return; }   // only your own turn; the computer shoots through fromBot
+      const c = E.clampShot(vx, vy); if (this.net) Net.link.send({ type: 'shot', i: this.g.k, vx: c.vx, vy: c.vy });
+      this.launch(c.vx, c.vy); SFX.hit();
+    }
+    launch(vx, vy) { const s = this.g.s; this.ev = { first: -1, potted: [], steps: 0 }; s.vx[0] = vx; s.vy[0] = vy; this.state = 'roll'; this.acc = 0; this.stepsDone = 0; this.ff = false; this.shotBy = this.g.turn; this.msg.textContent = ''; this.aim = null; this.botAim = null; this.seen = 0; }
+    finishRoll() {
+      const g = this.g, s = g.s; for (let i = 0; i < s.n; i++) { s.vx[i] = 0; s.vy[i] = 0; }
+      const r = E.settle(g, this.ev); this.rep = r; this.state = 'res'; this.resT = 0;
+      if (r.foul) { this.note = { txt: T('snk_foul', { n: this.nameOf(1 - r.who) }), t: 0, c: '#ff8f7a' }; SFX.lose(); vib(40); }
+      else if (r.pts) { this.note = { txt: '+' + r.pts, t: 0, c: '#6dffa0' }; SFX.win(); vib(20); }
+      else this.note = { txt: T('snk_miss'), t: 0, c: '#ffd877' };
+      if (this.mode === 'solo') g.turn = 0;
+    }
+    advance() {
+      const g = this.g; let end = null;
+      if (this.mode === 'solo') { const st = E.levelState(this.lv, g); if (st.done) end = st; } else { const d = E.decided(g); if (d !== null) end = { res: d }; }
+      if (end) { this.state = 'end'; setTimeout(() => this.finish(end), 400); return; }
+      if (this.net) Net.link.send({ type: 'sum', k: g.k, h: this.hash() });
+      this.beginTurn();
+    }
+    hash() { const s = this.g.s; let h = 0; for (let i = 0; i < s.n; i++) h = (h * 31 + Math.round(s.x[i] * 1e6) + Math.round(s.y[i] * 1e6) * 7 + s.on[i]) % 1e12; return h; }
+    onMessage(m) {
+      if (m.type === 'shot') {
+        const opp = 1 - this.me;
+        if (m.i === this.g.k && this.state === 'prep' && this.g.turn === opp) { const c = E.clampShot(m.vx, m.vy); this.launch(c.vx, c.vy); }
+        else if (m.i > this.g.k && this.state !== 'end' && this.state !== 'fin') this.q[m.i] = m;
+      } else if (m.type === 'sum') { if (m.k === this.g.k && this.state !== 'roll' && this.state !== 'res' && m.h !== this.hash()) { this.desync = true; } }
+      else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('snk'); let html = '', btns = ''; const sc = `🎱 ${this.g.sc[0]} : ${this.g.sc[1]}`;
+      if (m === 'solo') {
+        const win = !!end.win, n = this.lv.n;
+        if (win) { if (end.stars > (st.lv[n] || 0)) st.lv[n] = end.stars; st.games++; st.wins++; saveP(); Meta.after('snk', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(end.stars)}${'☆'.repeat(3 - end.stars)}</div><p>🎱 ${this.g.sc[0]}/${this.lv.goal}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('snk', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>🎱 ${this.g.sc[0]}/${this.lv.goal}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (r === 'draw') title = T('draw'); else if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('snk', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('snk', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>${sc}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; this.paused = true; const online = this.net;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      if (!this.paused) {
+        if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.beginTurn(); SFX.go(); } }
+        else if (this.state === 'prep') {
+          if (this.botAim) { this.botAim.t += dt; if (this.botAim.t >= this.botAim.wait) { const b = this.botAim; this.botAim = null; this.shoot(1, b.vx, b.vy, true); } }
+        } else if (this.state === 'roll') {
+          this.acc += dt * (this.ff ? 3 : 1) * (this.spd < 1 ? 1 / this.spd : 1); let n = Math.min(STEPS_PER_FRAME * (this.ff || this.spd < 1 ? 3 : 1), Math.floor(this.acc / E.DT)); this.acc -= n * E.DT; const s = this.g.s;
+          while (n-- > 0) { const had = this.ev.potted.length; const mv = E.step(s, this.ev); this.stepsDone++; for (let k = had; k < this.ev.potted.length; k++) { const i = this.ev.potted[k]; this.drops.push({ x: s.x[i], y: s.y[i], i, t: 0 }); } if (mv === 0 || this.stepsDone > 240 * 22) { this.finishRoll(); break; } }
+        } else if (this.state === 'res') { this.resT += dt; if (this.resT > 1.1 * this.spd) this.advance(); }
+        this.drops.forEach(d => d.t += dt); this.drops = this.drops.filter(d => d.t < 0.5); if (this.note) { this.note.t += dt; if (this.note.t > 1.6) this.note = null; }
+      }
+      this.t += dt; this.draw(); this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    /* ---------- drawing ---------- */
+    draw() { this.views.forEach(v => { if (v.ctx) this.drawView(v); }); this.stat(); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return; const g = this.g;
+      if (this.mode === 'solo') st.innerHTML = `<span>🎱 ${g.sc[0]}/${this.lv.goal}<small>${T('snk_need', { n: this.lv.goal })}</small></span><span>${Math.min(g.shots[0] + 1, this.lv.shots)}/${this.lv.shots}<small>${T('snk_shot')}</small></span><span>★${this.lv.s3}<small>${T('snk_left', { n: Math.max(0, this.lv.s3 - g.shots[0]) })}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">${g.sc[0]}<small>${esc(this.nameOf(0))}${g.turn === 0 ? ' ◀' : ''}</small></span><span>${Math.min(g.k + 1, E.MAXSHOTS)}/${E.MAXSHOTS}<small>${T('snk_shot')}</small></span><span style="color:${TEAM[1]}">${g.sc[1]}<small>${esc(this.nameOf(1))}${g.turn === 1 ? ' ◀' : ''}</small></span>`;
+    }
+    ball(c, v, x, y, id, val, alpha, sc) {
+      const [u, w] = this.toC(v, x, y), cs = v.cs, R = E.BR * cs * (sc || 1), px = u * cs, py = w * cs, col = BCOL[id === 0 ? 0 : val];
+      c.save(); c.globalAlpha = alpha === undefined ? 1 : alpha; c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(px + R * 0.18, py + R * 0.28, R * 1.0, R * 0.85, 0, 0, 7); c.fill();
+      const gr = c.createRadialGradient(px - R * 0.35, py - R * 0.4, R * 0.1, px, py, R * 1.05); gr.addColorStop(0, '#fff'); gr.addColorStop(0.18, col[0]); gr.addColorStop(1, col[1]); c.fillStyle = gr; c.beginPath(); c.arc(px, py, R, 0, 7); c.fill(); c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = Math.max(1, R * 0.1); c.stroke();
+      if (id !== 0 && sc === undefined) { c.fillStyle = val === 2 ? '#3a2f00' : '#fff'; c.font = `800 ${R * 1.05}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(String(val), px, py + R * 0.05); }
+      c.restore();
+    }
+    drawView(v) {
+      const c = v.ctx, cs = v.cs, s = this.g.s, bgA = Art.get('bg-snk'), P = (x, y) => { const q = this.toC(v, x, y); return [q[0] * cs, q[1] * cs]; };
+      c.clearRect(0, 0, v.cw, v.ch); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, v.cw, v.ch, 14); c.clip();
+      if (bgA) { c.drawImage(bgA, 0, 0, v.cw, v.ch); } else { c.fillStyle = '#2a1a12'; c.fillRect(0, 0, v.cw, v.ch); }
+      // rail, cloth, pockets
+      const a = P(0, 0), b = P(E.W, E.H), x0 = Math.min(a[0], b[0]), y0 = Math.min(a[1], b[1]), w = Math.abs(a[0] - b[0]), h = Math.abs(a[1] - b[1]);
+      const wood = Art.get('snk-wood'); c.fillStyle = wood ? c.createPattern(wood, 'repeat') : '#6b3f1f'; c.beginPath(); c.roundRect(x0 - M * cs * 0.98, y0 - M * cs * 0.98, w + M * cs * 1.96, h + M * cs * 1.96, cs * 0.7); c.fill(); c.strokeStyle = '#3a200d'; c.lineWidth = cs * 0.12; c.stroke();
+      const cl = c.createLinearGradient(0, y0, 0, y0 + h); cl.addColorStop(0, '#1f8a55'); cl.addColorStop(1, '#176d42'); const felt = Art.get('snk-felt'); if (felt) { c.fillStyle = c.createPattern(felt, 'repeat'); c.fillRect(x0, y0, w, h); c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(x0, y0, w, h); c.fillStyle = cl; c.globalAlpha = 0.25; c.fillRect(x0, y0, w, h); c.globalAlpha = 1; } else { c.fillStyle = cl; c.fillRect(x0, y0, w, h); }
+      c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = cs * 0.05; { const d1 = P(3.0, 0), d2 = P(3.0, E.H); c.beginPath(); c.moveTo(d1[0], d1[1]); c.lineTo(d2[0], d2[1]); c.stroke(); }
+      E.PK.forEach(p => { const q = P(p[0], p[1]); c.fillStyle = '#0a0d10'; c.beginPath(); c.arc(q[0], q[1], p[2] * cs * 1.02, 0, 7); c.fill(); c.strokeStyle = '#caa24a'; c.lineWidth = cs * 0.08; c.stroke(); });
+      // aiming (only the player whose turn it is, on their own view)
+      const active = this.state === 'prep' && this.canAct(v), cx = s.x[0], cy = s.y[0];
+      let sh = null, pw = 0; if (v.drag) { sh = this.shotOf(v, v.drag.s[0] - v.drag.c[0], v.drag.s[1] - v.drag.c[1]); }
+      else if (this.botAim && v.side === 0) sh = { vx: this.botAim.vx, vy: this.botAim.vy, p: Math.min(1, (Math.sqrt(this.botAim.vx ** 2 + this.botAim.vy ** 2) - E.VMIN) / (E.VMAX - E.VMIN)) };
+      if (sh && this.state === 'prep' && s.on[0]) {
+        pw = sh.p; const ray = E.aimRay(s, sh.vx, sh.vy); if (ray) {
+          const q0 = P(cx, cy), q1 = P(ray.gx, ray.gy); c.save(); c.setLineDash([cs * 0.3, cs * 0.22]); c.strokeStyle = 'rgba(255,255,255,.85)'; c.lineWidth = cs * 0.09; c.beginPath(); c.moveTo(q0[0], q0[1]); c.lineTo(q1[0], q1[1]); c.stroke(); c.setLineDash([]);
+          c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = cs * 0.07; c.beginPath(); c.arc(q1[0], q1[1], E.BR * cs, 0, 7); c.stroke();
+          if (ray.hit >= 0) { const q2 = P(ray.gx + ray.nx * 2.2, ray.gy + ray.ny * 2.2), q3 = P(s.x[ray.hit], s.y[ray.hit]); c.strokeStyle = '#ffd877'; c.lineWidth = cs * 0.09; c.beginPath(); c.moveTo(q3[0], q3[1]); c.lineTo(q3[0] + (q2[0] - q1[0]), q3[1] + (q2[1] - q1[1])); c.stroke(); } c.restore();
+          // cue stick behind the white ball, pulled back with the power
+          const L = Math.sqrt(sh.vx * sh.vx + sh.vy * sh.vy), ux = sh.vx / L, uy = sh.vy / L, back = 0.5 + pw * 2.2, st0 = P(cx - ux * back, cy - uy * back), st1 = P(cx - ux * (back + 9), cy - uy * (back + 9)), cue = Art.get('snk-cue');
+          if (cue) { c.save(); c.translate(st0[0], st0[1]); c.rotate(Math.atan2(st1[1] - st0[1], st1[0] - st0[0]) + Math.PI); const lw = cs * 9; c.drawImage(cue, -lw, -cs * 0.22, lw, cs * 0.44); c.restore(); }
+          else { c.strokeStyle = '#d9b27a'; c.lineWidth = cs * 0.3; c.lineCap = 'round'; c.beginPath(); c.moveTo(st0[0], st0[1]); c.lineTo(st1[0], st1[1]); c.stroke(); c.strokeStyle = '#3a6ea5'; c.lineWidth = cs * 0.32; c.beginPath(); c.moveTo(st0[0], st0[1]); c.lineTo(st0[0] + (st1[0] - st0[0]) * 0.03, st0[1] + (st1[1] - st0[1]) * 0.03); c.stroke(); }
+        }
+      }
+      // balls
+      for (let i = s.n - 1; i >= 0; i--) if (s.on[i]) this.ball(c, v, s.x[i], s.y[i], i, s.val[i]);
+      this.drops.forEach(d => { const k = d.t / 0.5; this.ball(c, v, d.x, d.y, d.i, s.val[d.i], 1 - k, 1 - 0.7 * k); });
+      // power meter along the right (portrait) or bottom
+      if (v.drag && sh) { const bw = v.cw * 0.5, bx = (v.cw - bw) / 2, by = v.ch - cs * 0.55; c.fillStyle = 'rgba(0,0,0,.5)'; c.beginPath(); c.roundRect(bx, by - cs * 0.2, bw, cs * 0.4, cs * 0.2); c.fill(); c.fillStyle = sh.p > 0.8 ? '#ff7a5c' : '#ffd877'; c.beginPath(); c.roundRect(bx, by - cs * 0.2, Math.max(cs * 0.4, bw * sh.p), cs * 0.4, cs * 0.2); c.fill(); }
+      // waiting veil on the inactive view in two-player mode, and the turn marker everywhere
+      if (this.mode === 'two' && this.state !== 'count' && this.g.turn !== v.side) { c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(0, 0, v.cw, v.ch); }
+      if (this.note && (this.mode === 'two' ? true : true)) { const k = Math.min(1, this.note.t * 4); c.save(); c.globalAlpha = Math.min(1, (1.6 - this.note.t) * 2) * k; c.font = `900 ${cs * 1.5}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.22; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.7)'; c.fillStyle = this.note.c; const q = P(E.W / 2, E.H / 2); c.strokeText(this.note.txt, q[0], q[1]); c.fillText(this.note.txt, q[0], q[1]); c.restore(); }
+      c.restore();
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'snk'; setPlayBg('snk'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.snk = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#6b3f1f"/><rect x="6" y="6" width="78" height="58" rx="6" fill="#1f8a55"/><circle cx="8" cy="8" r="5" fill="#0a0d10"/><circle cx="82" cy="8" r="5" fill="#0a0d10"/><circle cx="8" cy="62" r="5" fill="#0a0d10"/><circle cx="82" cy="62" r="5" fill="#0a0d10"/><circle cx="28" cy="40" r="5" fill="#fff"/><circle cx="52" cy="30" r="5" fill="#e0382f"/><circle cx="60" cy="38" r="5" fill="#e0382f"/><circle cx="56" cy="46" r="5" fill="#f2d138"/><path d="M6 60 L24 44" stroke="#d9b27a" stroke-width="3" stroke-linecap="round"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'snk', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen', 'hoop', 'dart', 'box'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊' };
+const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
