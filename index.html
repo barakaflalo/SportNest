@@ -169,6 +169,7 @@ input.txt:focus{border-color:var(--acc)}
 #play[data-bg=dart]{background:linear-gradient(180deg,#2a1f33,#3a2a46 50%,#25303f)}
 #play[data-bg=box]{background:linear-gradient(180deg,#1b1f33,#3a3350 50%,#34406a)}
 #play[data-bg=snk]{background:linear-gradient(180deg,#2a1a12,#3a2316 50%,#1d140e)}
+#play[data-bg=golf]{background:linear-gradient(180deg,#12301c,#1b4a2a 50%,#0f2a19)}
 .pen-views{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
 .pen-views .pv{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
 .pen-views.duo .pv.top canvas{transform:rotate(180deg)}
@@ -187,7 +188,7 @@ input.txt:focus{border-color:var(--acc)}
 <div id="album" class="sc"></div>
 <div id="about" class="sc"></div>
 <script>
-const ART_FILES = ["bg-box","bg-dart","bg-hoop","bg-pen","box-head1","box-head2","dart-dart","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-box","tile-dart","tile-hoop","tile-pen","tile-snk"];
+const ART_FILES = ["bg-box","bg-dart","bg-hoop","bg-pen","box-head1","box-head2","dart-dart","golf-grass","golf-sand","golf-wall","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-box","tile-dart","tile-golf","tile-hoop","tile-pen","tile-snk"];
 /* ===== src/nestlink.js ===== */
 /* =====================================================================
    NestLink 1.1 — AppNest online multiplayer module (WebRTC via PeerJS)
@@ -981,6 +982,201 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   }
   const API = { W, H, BR, DT, VMAX, VMIN, PK, CUE0, FOUL, MAXSHOTS, COLORS, SIG, prng, gauss, clamp, make, clone, rack, freeSpot, step, run, clampShot, qv, newGame, remaining, settle, shoot, decided, aimRay, candidates, trial, botShot, layout, makeLevels, levelState };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Snk = API;
+})(typeof self !== 'undefined' ? self : this);
+
+/* ===== engines/golf.js ===== */
+/* SportNest — mini-golf engine (pure, deterministic).
+   One ball at a time, fixed time step 1/240 s, only + - * / and sqrt inside the simulation (no Math.random, no trig), so two phones that get the
+   same stroke (vx, vy rounded to 3 decimals) compute exactly the same path. Moving gates run on a clock that advances only while a ball rolls,
+   and both phones advance it with the same strokes in the same order.
+   Rules: lowest number of strokes wins. Water costs one stroke and the ball goes back to where the stroke started. A ball that is not in the hole
+   after 8 strokes is picked up and counts 8. Balls of the two players do not touch each other. */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const W = 20, H = 10, BR = 0.28, HR = 0.5, DT = 1 / 240, VMAX = 18, VMIN = 2.5, MU = 2.2, DAMP = 0.35, E_WALL = 0.8, E_BUMP = 1.05, VCAP = 8, GR = 1.1, GA = 10, STOPV = 0.04;
+  const SANDK = 5, ICEK = 0.22, MAXSTEPS = 240 * 16, MAXS = 8, NH = 3;
+  /* ---------- the 24 holes ---------- */
+  // walls [x0,y0,x1,y1]; bumpers [x,y,r]; sand/ice/water [x0,y0,x1,y1]; gates {x0,y0,x1,y1,dy,per,ph}: the rectangle slides down by up to dy and back, one period = per steps
+  const HD = [
+    { par: 1, tee: [3, 5], hole: [16.5, 5] },
+    { par: 1, tee: [3, 2], hole: [17, 8] },
+    { par: 2, tee: [3, 5], hole: [17, 5], walls: [[9.4, 3.2, 10.4, 6.8]] },
+    { par: 2, tee: [2.5, 8], hole: [17.5, 2], walls: [[6.5, 0, 7.5, 5], [12.5, 5, 13.5, 10]] },
+    { par: 2, tee: [3, 2], hole: [17, 2], walls: [[10, 0, 11, 7]] },
+    { par: 2, tee: [3, 8], hole: [17, 2], walls: [[9, 0, 10, 4.2], [9, 6.8, 10, 10]] },
+    { par: 2, tee: [3, 5], hole: [17, 5], sand: [[12, 2.5, 15, 7.5]] },
+    { par: 2, tee: [3, 5], hole: [17, 5], bumpers: [[9, 3.2, 0.8], [9, 6.8, 0.8], [12, 5, 0.8]] },
+    { par: 3, tee: [3, 2], hole: [17, 8], walls: [[9, 3.5, 10, 10]], sand: [[13, 0, 16, 5]] },
+    { par: 3, tee: [2.5, 2], hole: [17.5, 8], walls: [[6, 0, 7, 7], [13, 3, 14, 10]] },
+    { par: 2, tee: [3, 5], hole: [17, 5], bumpers: [[8, 3, 0.55], [8, 7, 0.55], [10.5, 5, 0.55], [13, 3, 0.55], [13, 7, 0.55], [15, 5, 0.5]] },
+    { par: 3, tee: [3, 5], hole: [16.5, 5], walls: [[10, 0, 11, 3.5], [10, 6.5, 11, 10]], sand: [[12.5, 2, 15, 8]] },
+    { par: 2, tee: [3, 5], hole: [17, 5], water: [[8, 0, 12, 4], [8, 6, 12, 10]] },
+    { par: 2, tee: [3, 5], hole: [17, 5], gates: [{ x0: 9.6, y0: 0, x1: 10.4, y1: 3.6, dy: 6.4, per: 360, ph: 0 }] },
+    { par: 2, tee: [3, 5], hole: [17, 5], water: [[8, 2.5, 13, 7.5]] },
+    { par: 3, tee: [2.5, 5], hole: [17.5, 5], gates: [{ x0: 6.8, y0: 0, x1: 7.6, y1: 3.4, dy: 6.6, per: 400, ph: 0 }, { x0: 12.4, y0: 0, x1: 13.2, y1: 3.4, dy: 6.6, per: 520, ph: 260 }] },
+    { par: 3, tee: [2.5, 2], hole: [17.5, 8], walls: [[7, 0, 8, 6.5], [13, 3.5, 14, 10]], water: [[8, 0, 13, 2], [8, 8, 13, 10]] },
+    { par: 3, tee: [3, 5], hole: [17.5, 5], sand: [[12, 0, 15, 10]], gates: [{ x0: 9, y0: 0, x1: 9.8, y1: 3.6, dy: 6.4, per: 420, ph: 0 }] },
+    { par: 2, tee: [3, 5], hole: [17.5, 5], ice: [[6, 0, 20, 10]], walls: [[12, 0, 13, 4], [12, 6, 13, 10]] },
+    { par: 3, tee: [3, 5], hole: [18, 5], ice: [[7, 0, 20, 10]], bumpers: [[11, 3, 0.7], [11, 7, 0.7], [14.5, 5, 0.7]] },
+    { par: 3, tee: [3, 5], hole: [18, 5], ice: [[5, 0, 20, 10]], water: [[5, 0, 20, 0.9], [5, 9.1, 20, 10]], walls: [[11, 3, 12, 7]] },
+    { par: 3, tee: [2.5, 2], hole: [18, 8], walls: [[5, 0, 6, 7], [10, 3, 11, 10], [15, 0, 16, 7]] },
+    { par: 3, tee: [2.5, 8], hole: [18.5, 5], walls: [[8, 3.5, 9, 10]], sand: [[11, 0, 14, 5]], bumpers: [[15, 6, 0.8]], gates: [{ x0: 16, y0: 0, x1: 16.8, y1: 3.2, dy: 6.8, per: 420, ph: 90 }] },
+    { par: 4, tee: [2.5, 2], hole: [18.5, 4], walls: [[5, 0, 6, 6.5], [11, 3.5, 12, 10]], ice: [[12, 0, 20, 10]], water: [[12, 0, 20, 1.2]], bumpers: [[17.5, 7, 0.8]], gates: [{ x0: 15, y0: 1.2, x1: 15.8, y1: 4.4, dy: 5.6, per: 480, ph: 0 }] }
+  ];
+  const holeDef = n => { const d = HD[n - 1]; if (!d._ok) { d.n = n; d.walls = d.walls || []; d.bumpers = d.bumpers || []; d.sand = d.sand || []; d.ice = d.ice || []; d.water = d.water || []; d.gates = d.gates || []; d._ok = 1; } return d; };
+  const gateRect = (gt, c) => { const per = gt.per, m = (c + gt.ph) % per, half = per / 2, tri = m < half ? m : per - m, off = gt.dy * tri / half; return [gt.x0, gt.y0 + off, gt.x1, gt.y1 + off]; };
+  /* ---------- ball ---------- */
+  const mkBall = h => ({ x: h.tee[0], y: h.tee[1], vx: 0, vy: 0, lx: h.tee[0], ly: h.tee[1], c: 0, nb: 0, in: 0, wet: 0 });
+  const qv = v => Math.round(v * 1000) / 1000;
+  function clampShot(vx, vy) { vx = +vx || 0; vy = +vy || 0; let sp = Math.sqrt(vx * vx + vy * vy); if (sp > VMAX) { vx = vx / sp * VMAX; vy = vy / sp * VMAX; sp = VMAX; } if (sp > 0 && sp < VMIN) { vx = vx / sp * VMIN; vy = vy / sp * VMIN; } return { vx: qv(vx), vy: qv(vy) }; }
+  function rectHit(b, x0, y0, x1, y1, e) {      // circle against a rectangle; pushes the ball out and reflects the normal part of the velocity
+    const px = b.x < x0 ? x0 : b.x > x1 ? x1 : b.x, py = b.y < y0 ? y0 : b.y > y1 ? y1 : b.y, dx = b.x - px, dy = b.y - py, d2 = dx * dx + dy * dy;
+    if (d2 >= BR * BR) return 0; let nx, ny;
+    if (d2 > 1e-12) { const d = Math.sqrt(d2); nx = dx / d; ny = dy / d; b.x = px + nx * BR; b.y = py + ny * BR; }
+    else { const l = b.x - x0, r = x1 - b.x, t = b.y - y0, u = y1 - b.y, m = Math.min(l, r, t, u); if (m === l) { nx = -1; ny = 0; b.x = x0 - BR; } else if (m === r) { nx = 1; ny = 0; b.x = x1 + BR; } else if (m === t) { nx = 0; ny = -1; b.y = y0 - BR; } else { nx = 0; ny = 1; b.y = y1 + BR; } }
+    const vn = b.vx * nx + b.vy * ny; if (vn < 0) { b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny; b.nb++; } return 1;
+  }
+  function step(b, h) {         // one fixed step; returns 1 while the ball is moving
+    if (b.in || b.wet) return 0; b.c++;
+    let vx = b.vx, vy = b.vy; const hx = h.hole[0] - b.x, hy = h.hole[1] - b.y, d2 = hx * hx + hy * hy;
+    if (d2 < GR * GR) { const d = Math.sqrt(d2); if (d > 1e-6) { vx += hx / d * GA * DT; vy += hy / d * GA * DT; } }
+    let k = 1; const x = b.x, y = b.y;
+    for (let i = 0; i < h.sand.length; i++) { const a = h.sand[i]; if (x >= a[0] && x <= a[2] && y >= a[1] && y <= a[3]) k = SANDK; }
+    for (let i = 0; i < h.ice.length; i++) { const a = h.ice[i]; if (x >= a[0] && x <= a[2] && y >= a[1] && y <= a[3]) k = ICEK; }
+    const sp2 = vx * vx + vy * vy;
+    if (sp2 > 0) { const sp = Math.sqrt(sp2), ns = sp - (MU + DAMP * sp) * k * DT; if (ns <= STOPV) { vx = 0; vy = 0; } else { const f = ns / sp; vx *= f; vy *= f; } }
+    b.vx = vx; b.vy = vy; b.x += vx * DT; b.y += vy * DT;
+    // outer border
+    if (b.x < BR) { b.x = BR; if (b.vx < 0) { b.vx = -b.vx * E_WALL; b.nb++; } } else if (b.x > W - BR) { b.x = W - BR; if (b.vx > 0) { b.vx = -b.vx * E_WALL; b.nb++; } }
+    if (b.y < BR) { b.y = BR; if (b.vy < 0) { b.vy = -b.vy * E_WALL; b.nb++; } } else if (b.y > H - BR) { b.y = H - BR; if (b.vy > 0) { b.vy = -b.vy * E_WALL; b.nb++; } }
+    for (let i = 0; i < h.walls.length; i++) { const w = h.walls[i]; rectHit(b, w[0], w[1], w[2], w[3], E_WALL); }
+    for (let i = 0; i < h.gates.length; i++) { const r = gateRect(h.gates[i], b.c); rectHit(b, r[0], r[1], r[2], r[3], E_WALL); }
+    for (let i = 0; i < h.bumpers.length; i++) {
+      const o = h.bumpers[i], dx = b.x - o[0], dy = b.y - o[1], rr = o[2] + BR, dd = dx * dx + dy * dy;
+      if (dd < rr * rr && dd > 1e-12) { const d = Math.sqrt(dd), nx = dx / d, ny = dy / d; b.x = o[0] + nx * rr; b.y = o[1] + ny * rr; const vn = b.vx * nx + b.vy * ny; if (vn < 0) { let vn2 = -vn * E_BUMP; if (vn2 < 3) vn2 = 3; b.vx += (vn2 - vn) * nx; b.vy += (vn2 - vn) * ny; b.nb++; } }
+    }
+    // hole, water
+    const ex = h.hole[0] - b.x, ey = h.hole[1] - b.y;
+    if (ex * ex + ey * ey < HR * HR && b.vx * b.vx + b.vy * b.vy < VCAP * VCAP) { b.in = 1; b.x = h.hole[0]; b.y = h.hole[1]; b.vx = 0; b.vy = 0; return 0; }
+    for (let i = 0; i < h.water.length; i++) { const a = h.water[i]; if (b.x >= a[0] && b.x <= a[2] && b.y >= a[1] && b.y <= a[3]) { b.wet = 1; b.vx = 0; b.vy = 0; return 0; } }
+    return (b.vx !== 0 || b.vy !== 0) ? 1 : 0;
+  }
+  function launch(b, vx, vy) { b.lx = b.x; b.ly = b.y; b.vx = vx; b.vy = vy; b.nb = 0; b.wet = 0; }
+  /* ---------- a match: a list of holes, one or two players ---------- */
+  function newGame(holes, np, maxs) {
+    const g = { holes, np: np || 1, maxs: maxs || MAXS, hi: 0, k: 0, phase: 'play', tot: [0, 0], hres: [], b: [], clock: 0, st: [0, 0], fin: [0, 0], turn: 0 };
+    startHole(g); return g;
+  }
+  function startHole(g) { const h = g.holes[g.hi]; g.b = [mkBall(h), mkBall(h)]; g.clock = 0; g.st = [0, 0]; g.fin = [g.np > 1 ? 0 : 0, g.np > 1 ? 0 : 1]; g.turn = g.np > 1 ? g.hi % 2 : 0; g.phase = 'play'; }
+  function nextHole(g) { if (g.phase !== 'holeEnd') return; g.hi++; startHole(g); }
+  function begin(g, vx, vy) { const c = clampShot(vx, vy), b = g.b[g.turn]; b.c = g.clock; launch(b, c.vx, c.vy); return { steps: 0, who: g.turn }; }
+  function run(g, ev, maxSteps) {     // roll the ball to rest (used by the bots and the tests; the UI steps the same function frame by frame)
+    const b = g.b[ev.who], h = g.holes[g.hi]; let n = maxSteps || MAXSTEPS;
+    while (n-- > 0) { const mv = step(b, h); ev.steps++; if (!mv) break; }
+    return ev;
+  }
+  function settle(g, ev) {
+    const t = ev.who, b = g.b[t], h = g.holes[g.hi], rep = { who: t, in: false, wet: false, pick: false, holeEnd: false, over: false };
+    b.vx = 0; b.vy = 0; g.clock = b.c; g.k++; g.st[t]++;
+    if (b.in) { g.fin[t] = 1; rep.in = true; }
+    else if (b.wet) { b.x = b.lx; b.y = b.ly; b.wet = 0; g.st[t]++; rep.wet = true; }
+    if (!g.fin[t] && g.st[t] >= g.maxs) { g.st[t] = g.maxs; g.fin[t] = 1; rep.pick = true; }
+    rep.st = g.st[t];
+    if (g.fin[0] && g.fin[1]) {
+      rep.holeEnd = true; g.hres.push([g.st[0], g.st[1]]); g.tot[0] += g.st[0]; g.tot[1] += g.st[1];
+      if (g.np === 1) g.phase = 'over'; else if (g.hi >= g.holes.length - 1) { g.phase = 'over'; rep.over = true; } else g.phase = 'holeEnd';
+      if (g.np === 1) rep.over = true;
+    } else if (g.np > 1 && !g.fin[1 - t]) g.turn = 1 - t;
+    return rep;
+  }
+  function shoot(g, vx, vy) { const ev = begin(g, vx, vy); run(g, ev); return settle(g, ev); }
+  function decided(g) { if (g.phase !== 'over') return null; return g.tot[0] < g.tot[1] ? 0 : g.tot[1] < g.tot[0] ? 1 : 'draw'; }
+  function matchHoles(seed) {      // three different holes from the first twenty-one, easy ones first
+    const R = prng(seed * 3 + 11), pool = []; for (let n = 1; n <= 21; n++) pool.push(n); const pick = [];
+    for (let i = 0; i < NH; i++) { const j = (R() * pool.length) | 0; pick.push(pool.splice(j, 1)[0]); }
+    pick.sort((a, b) => a - b); return pick.map(holeDef);
+  }
+  /* ---------- levels ---------- */
+  function makeLevels() {
+    const out = [];
+    for (let n = 1; n <= 24; n++) { const h = holeDef(n), par = h.par; out.push({ n, hole: h, par, limit: par + 3, s3: par, s2: par + 1, seed: 9000 + n * 17 }); }
+    return out;
+  }
+  function levelState(lv, g) {
+    const b = g.b[0], k = g.st[0];
+    if (b.in) return { done: true, win: true, stars: k <= lv.s3 ? 3 : k <= lv.s2 ? 2 : 1 };
+    if (g.fin[0] || k >= lv.limit) return { done: true, win: false, stars: 0 };
+    return { done: false };
+  }
+  /* ---------- the computer ---------- */
+  const CELL = 0.25, NX = 80, NY = 40;
+  function distField(h) {         // walking distance to the hole over the grid (walls, bumpers and water block; sand and gates cost extra)
+    if (h._df) return h._df; const df = new Float32Array(NX * NY).fill(1e9), blocked = new Uint8Array(NX * NY), cost = new Float32Array(NX * NY).fill(1), INF = 1e9, inflate = BR - 0.05;
+    for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
+      const x = (i + 0.5) * CELL, y = (j + 0.5) * CELL, id = j * NX + i; let bl = x < inflate || x > W - inflate || y < inflate || y > H - inflate;
+      for (const w of h.walls) { const px = clamp(x, w[0], w[2]), py = clamp(y, w[1], w[3]); if ((x - px) * (x - px) + (y - py) * (y - py) < inflate * inflate) bl = true; }
+      for (const o of h.bumpers) { const dx = x - o[0], dy = y - o[1], r = o[2] + inflate; if (dx * dx + dy * dy < r * r) bl = true; }
+      for (const w of h.water) if (x >= w[0] && x <= w[2] && y >= w[1] && y <= w[3]) bl = true;
+      for (const s of h.sand) if (x >= s[0] && x <= s[2] && y >= s[1] && y <= s[3]) cost[id] = 1.8;
+      for (const gt of h.gates) { const y0 = gt.y0, y1 = gt.y1 + gt.dy; if (x >= gt.x0 - 0.3 && x <= gt.x1 + 0.3 && y >= y0 && y <= y1) cost[id] = 6; }
+      blocked[id] = bl ? 1 : 0;
+    }
+    const hi = clamp((h.hole[0] / CELL) | 0, 0, NX - 1), hj = clamp((h.hole[1] / CELL) | 0, 0, NY - 1), q = [hj * NX + hi]; df[q[0]] = 0; blocked[q[0]] = 0;
+    for (let qi = 0; qi < q.length; qi++) {
+      const id = q[qi], i = id % NX, j = (id / NX) | 0, d0 = df[id];
+      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) { if (!di && !dj) continue; const ni = i + di, nj = j + dj; if (ni < 0 || nj < 0 || ni >= NX || nj >= NY) continue; const nid = nj * NX + ni; if (blocked[nid]) continue; const nd = d0 + (di && dj ? 1.4142 : 1) * CELL * cost[nid]; if (nd < df[nid] - 1e-6) { df[nid] = nd; q.push(nid); } }
+    }
+    h._df = df; return df;
+  }
+  function dfAt(h, x, y) {
+    const df = distField(h), i = clamp((x / CELL) | 0, 0, NX - 1), j = clamp((y / CELL) | 0, 0, NY - 1); let v = df[j * NX + i];
+    if (v >= 1e8) { let m = 1e9; for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) { const ni = i + di, nj = j + dj; if (ni < 0 || nj < 0 || ni >= NX || nj >= NY) continue; m = Math.min(m, df[nj * NX + ni]); } v = m + 0.4; }
+    return v;
+  }
+  const sc = { x: 0, y: 0, vx: 0, vy: 0, lx: 0, ly: 0, c: 0, nb: 0, in: 0, wet: 0 };      // scratch ball for the bot's trial strokes
+  function trial(h, x, y, clock, vx, vy) {
+    sc.x = x; sc.y = y; sc.lx = x; sc.ly = y; sc.vx = vx; sc.vy = vy; sc.c = clock; sc.nb = 0; sc.in = 0; sc.wet = 0; let n = MAXSTEPS; while (n-- > 0) if (!step(sc, h)) break;
+    return sc;
+  }
+  function evalShot(h, x, y, clock, vx, vy) {         // lower is better
+    const r = trial(h, x, y, clock, vx, vy); if (r.in) return -1000 + Math.sqrt(vx * vx + vy * vy) * 0.01; if (r.wet) return dfAt(h, x, y) + 40;
+    const ex = h.hole[0] - r.x, ey = h.hole[1] - r.y; let v = dfAt(h, r.x, r.y) + 0.15 * Math.sqrt(ex * ex + ey * ey);
+    for (const s of h.sand) if (r.x >= s[0] && r.x <= s[2] && r.y >= s[1] && r.y <= s[3]) v += 0.6; return v;
+  }
+  const SPEEDS = [3, 4.5, 6.5, 9, 12, 15, 18];
+  const cache = new Map();      // the search is deterministic, so a repeated position (like the tee) is solved once
+  function search(h, x, y, clock, na, topK) {
+    const key = h.n + '|' + x + '|' + y + '|' + clock + '|' + na + '|' + topK; const hit = cache.get(key); if (hit) return hit.map(t => Object.assign({}, t));
+    const out = searchRaw(h, x, y, clock, na, topK); if (cache.size > 400) cache.clear(); cache.set(key, out.map(t => Object.assign({}, t))); return out;
+  }
+  function searchRaw(h, x, y, clock, na, topK) {
+    const cand = [];
+    for (let i = 0; i < na; i++) { const a = 6.283185307179586 * i / na, ca = Math.cos(a), sa = Math.sin(a); for (const sp of SPEEDS) cand.push({ a, sp, v: evalShot(h, x, y, clock, ca * sp, sa * sp) }); }
+    cand.sort((p, q) => p.v - q.v); const top = []; for (const c of cand) { if (top.length >= (topK || 1)) break; if (top.every(t => Math.abs(t.a - c.a) > 0.08 || Math.abs(t.sp - c.sp) > 1.5)) top.push(c); }
+    // refine each of the best around its angle and speed
+    for (const t of top) { let ba = t.a, bs = t.sp, bv = t.v; for (const da of [-0.025, -0.012, -0.005, -0.002, 0, 0.002, 0.005, 0.012, 0.025]) for (const f of [0.9, 0.96, 1, 1.04, 1.1]) { const a = t.a + da, sp = clamp(t.sp * f, VMIN, VMAX), v = evalShot(h, x, y, clock, Math.cos(a) * sp, Math.sin(a) * sp); if (v < bv) { bv = v; ba = a; bs = sp; } } t.a = ba; t.sp = bs; t.v = bv; }
+    top.sort((p, q) => p.v - q.v); return top;
+  }
+  const SIG = [0, 0.4, 0.2, 0.03, 0.012], PSIG = [0, 0.3, 0.25, 0.06, 0.02];
+  function botShot(lvl, g, R) {
+    const h = g.holes[g.hi], b = g.b[g.turn], hx = h.hole[0] - b.x, hy = h.hole[1] - b.y;
+    if (lvl <= 1) { const a = Math.atan2(hy, hx) + gauss(R) * SIG[1], sp = VMIN + (VMAX - VMIN) * (0.15 + 0.6 * R()) ** 2; return clampShot(Math.cos(a) * sp, Math.sin(a) * sp); }
+    const na = lvl === 2 ? 72 : lvl === 3 ? 90 : 120, top = search(h, b.x, b.y, g.clock, na, lvl >= 4 ? 4 : 1); let best = top[0];
+    if (lvl >= 4 && top.length > 1) { // prefer the candidate that still works when the aim is a little off
+      let bv = 1e9; for (const t of top) { let s = 0; for (const da of [-0.01, 0, 0.01]) for (const f of [0.97, 1.03]) { const a = t.a + da, sp = clamp(t.sp * f, VMIN, VMAX); s += evalShot(h, b.x, b.y, g.clock, Math.cos(a) * sp, Math.sin(a) * sp); } s = s / 6 + t.v * 0.2; if (s < bv) { bv = s; best = t; } }
+    }
+    const a = best.a + gauss(R) * SIG[lvl], sp = clamp(best.sp * (1 + gauss(R) * PSIG[lvl]), VMIN, VMAX); return clampShot(Math.cos(a) * sp, Math.sin(a) * sp);
+  }
+  function preview(g, vx, vy, extra) {       // dotted path for the aim line: up to the first bounce plus a little more; does not touch the real balls
+    const b = g.b[g.turn], h = g.holes[g.hi], c = clampShot(vx, vy), s = { x: b.x, y: b.y, vx: c.vx, vy: c.vy, lx: b.x, ly: b.y, c: g.clock, nb: 0, in: 0, wet: 0 }, pts = [[s.x, s.y]]; let n = 0, after = 0;
+    while (n++ < 1400) { if (!step(s, h)) { pts.push([s.x, s.y]); break; } if (n % 6 === 0) pts.push([s.x, s.y]); if (s.nb > 0) { after++; if (after > (extra || 40)) break; } }
+    return { pts, in: !!s.in, wet: !!s.wet };
+  }
+  const API = { W, H, BR, HR, DT, VMAX, VMIN, MAXS, NH, SIG, PSIG, prng, gauss, clamp, holeDef, gateRect, mkBall, clampShot, qv, step, newGame, startHole, nextHole, begin, run, settle, shoot, decided, matchHoles, makeLevels, levelState, distField, dfAt, trial, evalShot, search, botShot, preview };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Golf = API;
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/i18n.js ===== */
@@ -2099,10 +2295,38 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_golf.js ===== */
+/* SportNest — Mini-golf strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_golf: 'מיני־גולף', d_golf: 'מכוונים, מכים ומכניסים את הכדור לחור',
+      golf_help: 'הזיזו אצבע על המסלול כדי לסובב את הכוונה (רחוק מהכדור = עדין יותר), קבעו עוצמה בפס ולחצו הכה', golf_hit: 'הכה', golf_help_two: 'כל שחקן מכה בתורו מהצד שלו של הטלפון', golf_wait: 'ממתין למכה של היריב…', golf_think: 'היריב מכוון…',
+      golf_in: 'בפנים!', golf_ace: 'חור במכה אחת!', golf_wet: 'מים! מכה נוספת', golf_pick: 'הכדור הורם', golf_hole: 'חור', golf_par: 'פאר', golf_strokes: 'מכות', golf_left: 'נשארו {n}',
+      ru_golf: '<p>בכל חור צריך להכניס את הכדור לגומה בכמה שפחות מכות. הכדור מתגלגל, קופץ מהקירות ומהבולמים ומאט בחול. על קרח הוא מחליק הרבה יותר רחוק, ושערים נעים סוגרים ופותחים את הדרך.</p><p>כדי להכות מזיזים אצבע על המסלול, והכוונה מסתובבת סביב הכדור. ככל שהאצבע רחוקה מהכדור הכוונה מסתובבת בעדינות יותר, ולכוונון עדין במיוחד יש שני חצים קטנים. הקו המנוקד מראה לאן הכדור יתגלגל עד הפגיעה הראשונה. את העוצמה קובעים בפס שמתחת למסלול, ומכים בלחיצה על הכפתור "הכה".</p><p>כדור שמגיע לגומה מהר מדי עובר מעליה, ולכן לפעמים עדיף להכות חלש. כדור שנופל למים חוזר למקום שממנו הוכה ועולה לך מכה נוספת. אחרי 8 מכות הכדור מורם והחור נחשב 8.</p><p>בשלבים הכוכבים נקבעים לפי מספר המכות: מכות כמספר הפאר של החור נותנות שלושה כוכבים, אחת יותר נותנת שניים. במשחק מול יריב משחקים שלושה חורים, מי שיש לו בסך הכול פחות מכות מנצח, והכדורים של שני השחקנים לא מפריעים זה לזה.</p>' },
+    en: { g_golf: 'Mini Golf', d_golf: 'Aim, strike and sink the ball in the hole',
+      golf_help: 'Move a finger on the course to turn the aim (farther from the ball = finer), set the power on the bar and press Hit', golf_hit: 'Hit', golf_help_two: 'Each player strikes on their turn from their own side of the phone', golf_wait: 'Waiting for the opponent’s stroke…', golf_think: 'The opponent is aiming…',
+      golf_in: 'In!', golf_ace: 'Hole in one!', golf_wet: 'Water! One more stroke', golf_pick: 'Ball picked up', golf_hole: 'Hole', golf_par: 'Par', golf_strokes: 'Strokes', golf_left: '{n} left',
+      ru_golf: '<p>On every hole you must sink the ball in as few strokes as you can. The ball rolls, bounces off walls and bumpers and slows down in sand. On ice it slides much farther, and moving gates open and close the way.</p><p>To strike, move a finger on the course and the aim turns around the ball. The farther the finger is from the ball, the more gently the aim turns, and two small arrows give extra-fine adjustment. The dotted line shows where the ball will roll until its first bounce. Set the power on the bar under the course and press the Hit button.</p><p>A ball that reaches the hole too fast rolls right over it, so a soft stroke is sometimes better. A ball that falls into water goes back to where the stroke began and costs one extra stroke. After 8 strokes the ball is picked up and the hole counts 8.</p><p>In levels the stars depend on the number of strokes: the hole’s par gives three stars, one more gives two. Against an opponent you play three holes and the lower total wins. The two players’ balls never touch each other.</p>' },
+    ru: { g_golf: 'Мини-гольф', d_golf: 'Цельтесь, бейте и забивайте мяч в лунку',
+      golf_help: 'Двигайте пальцем по полю, чтобы повернуть прицел (дальше от мяча = точнее), задайте силу на полосе и нажмите «Удар»', golf_hit: 'Удар', golf_help_two: 'Каждый игрок бьёт в свой ход со своей стороны телефона', golf_wait: 'Ждём удар соперника…', golf_think: 'Соперник целится…',
+      golf_in: 'Есть!', golf_ace: 'Лунка с одного удара!', golf_wet: 'Вода! Ещё один удар', golf_pick: 'Мяч подобран', golf_hole: 'Лунка', golf_par: 'Пар', golf_strokes: 'Удары', golf_left: 'Осталось {n}',
+      ru_golf: '<p>На каждой лунке нужно загнать мяч в лунку за как можно меньшее число ударов. Мяч катится, отскакивает от стенок и отбойников и замедляется в песке. По льду он скользит гораздо дальше, а движущиеся ворота то закрывают, то открывают путь.</p><p>Чтобы ударить, двигайте пальцем по полю, и прицел поворачивается вокруг мяча. Чем дальше палец от мяча, тем плавнее поворот, а для самой точной настройки есть две маленькие стрелки. Пунктир показывает путь мяча до первого отскока. Силу задают на полосе под полем, а удар делают кнопкой «Удар».</p><p>Мяч, который летит к лунке слишком быстро, проскакивает над ней, поэтому иногда лучше ударить слабее. Мяч, упавший в воду, возвращается туда, откуда был нанесён удар, и это стоит ещё одного удара. После 8 ударов мяч подбирают, и лунка засчитывается как 8.</p><p>В уровнях звёзды зависят от числа ударов: пар лунки даёт три звезды, на один удар больше — две. В матче с соперником играют три лунки, побеждает тот, у кого в сумме меньше ударов. Мячи двух игроков не мешают друг другу.</p>' },
+    es: { g_golf: 'Minigolf', d_golf: 'Apunta, golpea y mete la bola en el hoyo',
+      golf_help: 'Mueve un dedo por el campo para girar la puntería (más lejos de la bola = más fino), fija la fuerza en la barra y pulsa Golpear', golf_hit: 'Golpear', golf_help_two: 'Cada jugador golpea en su turno desde su lado del teléfono', golf_wait: 'Esperando el golpe del rival…', golf_think: 'El rival está apuntando…',
+      golf_in: '¡Dentro!', golf_ace: '¡Hoyo en uno!', golf_wet: '¡Agua! Un golpe más', golf_pick: 'Bola recogida', golf_hole: 'Hoyo', golf_par: 'Par', golf_strokes: 'Golpes', golf_left: 'Quedan {n}',
+      ru_golf: '<p>En cada hoyo hay que meter la bola con el menor número de golpes posible. La bola rueda, rebota en las paredes y en los topes y se frena en la arena. Sobre hielo se desliza mucho más lejos, y las puertas móviles abren y cierran el camino.</p><p>Para golpear, mueve un dedo por el campo y la puntería gira alrededor de la bola. Cuanto más lejos esté el dedo de la bola, más suave gira, y dos flechas pequeñas permiten un ajuste muy fino. La línea de puntos muestra por dónde rodará la bola hasta su primer rebote. Fija la fuerza en la barra bajo el campo y pulsa el botón Golpear.</p><p>Una bola que llega al hoyo demasiado rápido pasa por encima, así que a veces conviene golpear suave. Una bola que cae al agua vuelve al lugar donde empezó el golpe y cuesta un golpe más. Tras 8 golpes se recoge la bola y el hoyo cuenta 8.</p><p>En los niveles las estrellas dependen del número de golpes: el par del hoyo da tres estrellas y uno más da dos. Contra un rival se juegan tres hoyos y gana quien suma menos golpes. Las bolas de los dos jugadores no se tocan.</p>' },
+    ar: { g_golf: 'ميني غولف', d_golf: 'صوّب واضرب وأدخل الكرة في الحفرة',
+      golf_help: 'حرّك إصبعك على الملعب لتدوير التصويب (كلما ابتعدت عن الكرة كان أدق)، اضبط القوة على الشريط واضغط اضرب', golf_hit: 'اضرب', golf_help_two: 'كل لاعب يضرب في دوره من جهته من الهاتف', golf_wait: 'بانتظار ضربة الخصم…', golf_think: 'الخصم يصوّب…',
+      golf_in: 'دخلت!', golf_ace: 'حفرة بضربة واحدة!', golf_wet: 'ماء! ضربة إضافية', golf_pick: 'رُفعت الكرة', golf_hole: 'حفرة', golf_par: 'بار', golf_strokes: 'ضربات', golf_left: 'تبقّى {n}',
+      ru_golf: '<p>في كل حفرة عليك إدخال الكرة بأقل عدد ممكن من الضربات. تتدحرج الكرة وترتد عن الجدران والمصدّات وتبطؤ في الرمل. وعلى الجليد تنزلق أبعد بكثير، وتفتح البوابات المتحركة الطريق وتغلقه.</p><p>للضرب حرّك إصبعك على الملعب فيدور التصويب حول الكرة. كلما ابتعد الإصبع عن الكرة دار التصويب بنعومة أكبر، وهناك سهمان صغيران لضبط دقيق جداً. يُظهر الخط المنقّط مسار الكرة حتى أول ارتداد. اضبط القوة على الشريط تحت الملعب واضغط زر اضرب.</p><p>الكرة التي تصل إلى الحفرة بسرعة كبيرة تعبر فوقها، لذلك تكون الضربة الخفيفة أحياناً أفضل. والكرة التي تسقط في الماء تعود إلى المكان الذي بدأت منه الضربة وتكلّفك ضربة إضافية. بعد 8 ضربات تُرفع الكرة وتُحتسب الحفرة 8.</p><p>في المراحل تعتمد النجوم على عدد الضربات: بار الحفرة يمنح ثلاث نجوم، وضربة إضافية تمنح نجمتين. أمام خصم تلعبان ثلاث حفر ويفوز من مجموع ضرباته أقل. وكرتا اللاعبين لا تصطدمان ببعضهما.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.5.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -3670,10 +3894,271 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   };
 })();
 
+/* ===== src/golf_ui.js ===== */
+'use strict';
+/* מיני־גולף — שלבים (חור לשלב), מול המחשב, שניים בטלפון (מסך מפוצל, מסלול לרוחב), אונליין. המנוע: Golf.
+   המכה היא וקטור מהירות (vx, vy) מעוגל לשלוש ספרות. שני הטלפונים מריצים את אותה פיזיקה בצעדים קבועים ומגיעים לאותו מקום.
+   רק מי שהתור שלו שולח מכה; הודעה מחוץ לתור נחסמת בתוך הפונקציה. */
+(function () {
+  const E = Golf, LV = E.makeLevels(), M = 0.9, STRIP = 2.0, TEAM = ['#4f8be8', '#e8584f'], GAIN = 0.5, STEP = 0.0017;   // STEP: radians per press of an arrow button (about 0.1 degree)
+  const STEPS_PER_FRAME = 40, clamp01 = v => Math.max(0, Math.min(1, v)), MAXSTEPS = 240 * 16;
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botLvl = cfg.mode === 'cpu' ? cfg.lv : 0;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0;
+      this.g = this.lv ? E.newGame([this.lv.hole], 1, this.lv.limit) : E.newGame(E.matchHoles(this.seed), 2);
+      this.Rb = E.prng(this.seed * 5 + 1); this.q = {}; this.spd = 1; this.ff = false; this.sa = [{ a: 0, p: 0.5 }, { a: 0, p: 0.5 }];
+      this.state = this.net ? 'count' : 'prep'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.acc = 0; this.ev = null; this.fx = []; this.note = null; this.botAim = null; this.resT = 0; this.rep = null;
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+      if (this.state === 'prep') this.beginTurn();
+    }
+    mine() { return this.mode === 'two' ? [this.g.turn] : this.net ? [this.me] : [0]; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views ${two ? 'duo' : 'one'}">${two ? '<div class="pv top"><canvas></canvas></div>' : ''}<div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center"></div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el);
+      this.views = $$('.pv', el).map(box => { const side = two ? (box.classList.contains('top') ? 1 : 0) : (this.net ? this.me : 0); return { box, cv: $('canvas', box), side, rot: two && side === 1, land: two, cs: 10, cw: 20, ch: 12, ctx: null }; });
+      this.views.forEach(v => this.bindInput(v));
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      this.views.forEach(v => {
+        const r = v.box.getBoundingClientRect(), uw = (v.land ? E.W : E.H) + 2 * M, uh = (v.land ? E.H : E.W) + 2 * M + STRIP; v.cs = Math.max(6, Math.min((r.width - 2) / uw, (r.height - 2) / uh)); v.cw = uw * v.cs; v.ch = uh * v.cs;
+        const d = Math.min(window.devicePixelRatio || 1, 2); v.cv.width = Math.round(v.cw * d); v.cv.height = Math.round(v.ch * d); v.cv.style.width = v.cw + 'px'; v.cv.style.height = v.ch + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+      });
+    }
+    // world (x along the long side, y across) <-> canvas units. Portrait: the tee is at the bottom. Landscape (two on one phone): x runs right.
+    toC(v, x, y) { return v.land ? [M + x, M + y] : [M + y, M + E.W - x]; }
+    toW(v, u, w) { return v.land ? [u - M, w - M] : [E.W - (w - M), u - M]; }
+    hole() { return this.g.holes[this.g.hi]; }
+    /* ---------- input ---------- */
+    local(v, e) { const r = v.cv.getBoundingClientRect(); let x = (e.clientX - r.left) * (v.cw / r.width), y = (e.clientY - r.top) * (v.ch / r.height); if (v.rot) { x = v.cw - x; y = v.ch - y; } return { x: x / v.cs, y: y / v.cs }; }
+    canAct(v) { return this.state === 'prep' && !this.paused && this.mine().includes(v.side) && this.g.turn === v.side; }
+    strip(v) {      // controls under the course, in canvas units: two fine-aim arrows, the power bar and the hit button
+      const base = (v.land ? E.H : E.W) + 2 * M, uw = (v.land ? E.W : E.H) + 2 * M, y = base + 0.15, h = STRIP - 0.3;
+      return { y, h, l: { x: 0.3, w: 1.5 }, r: { x: 1.9, w: 1.5 }, bar: { x: 3.7, w: uw - 3.7 - 3.6 }, hit: { x: uw - 3.3, w: 3.0 }, base };
+    }
+    powerSpeed(p) { return E.VMIN + (E.VMAX - E.VMIN) * p * p; }      // quadratic: soft strokes get more of the bar
+    fire(side) { const a = this.sa[side], sp = this.powerSpeed(a.p); this.shoot(side, Math.cos(a.a) * sp, Math.sin(a.a) * sp); }
+    rotate(side, d) { this.sa[side].a += d; }
+    bindInput(v) {
+      v.cv.addEventListener('pointerdown', e => {
+        e.preventDefault(); if (this.state === 'roll') this.ff = true; if (!this.canAct(v)) return; try { v.cv.setPointerCapture(e.pointerId); } catch (x) {} const p = this.local(v, e), st = this.strip(v), side = v.side, A = this.sa[side], hit = r => p.x >= r.x && p.x <= r.x + r.w;
+        if (p.y >= st.base) {
+          if (p.y < st.y || p.y > st.y + st.h) return;
+          if (hit(st.l)) { this.rotate(side, -STEP); v.rep = { k: -1, t: 0.4 }; SFX.tap(); }
+          else if (hit(st.r)) { this.rotate(side, STEP); v.rep = { k: 1, t: 0.4 }; SFX.tap(); }
+          else if (hit(st.bar)) { v.sl = true; A.p = clamp01((p.x - st.bar.x) / st.bar.w); }
+          else if (hit(st.hit)) { this.fire(side); }
+          return;
+        }
+        const w = this.toW(v, p.x, p.y), b = this.g.b[side], cx = b.x, cy = b.y; if (Math.hypot(w[0] - cx, w[1] - cy) < 0.7) return;     // too close to the ball: no stable angle
+        v.ro = { a0: Math.atan2(w[1] - cy, w[0] - cx), aim0: A.a };
+      });
+      v.cv.addEventListener('pointermove', e => {
+        if (!v.ro && !v.sl) return; const p = this.local(v, e), A = this.sa[v.side];
+        if (v.sl) { const st = this.strip(v); A.p = clamp01((p.x - st.bar.x) / st.bar.w); return; }
+        const w = this.toW(v, p.x, p.y), b = this.g.b[v.side], cx = b.x, cy = b.y; if (Math.hypot(w[0] - cx, w[1] - cy) < 0.7) return;
+        let d = Math.atan2(w[1] - cy, w[0] - cx) - v.ro.a0; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; A.a = v.ro.aim0 + d * GAIN;      // moving the finger far from the ball turns the aim only a little
+      });
+      const end = () => { v.ro = null; v.sl = false; v.rep = null; };
+      v.cv.addEventListener('pointerup', end); v.cv.addEventListener('pointercancel', end); v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    /* ---------- turn flow ---------- */
+    beginTurn() {
+      const g = this.g, h = this.hole(); this.state = 'prep'; this.botAim = null; this.resT = 0; this.rep = null;
+      if (this.mode === 'solo') g.turn = 0;
+      { const b = g.b[g.turn]; this.sa[g.turn].a = Math.atan2(h.hole[1] - b.y, h.hole[0] - b.x); }
+      if (this.mode === 'cpu' && g.turn === 1) { const sh = E.botShot(this.botLvl, g, this.Rb); this.botAim = { vx: sh.vx, vy: sh.vy, t: 0, wait: (1.0 + this.Rb() * 0.8) * this.spd }; }
+      this.msg.textContent = this.mode === 'two' ? T('golf_help_two') : (this.mode === 'cpu' && g.turn === 1) ? T('golf_think') : this.net && g.turn !== this.me ? T('golf_wait') : T('golf_help');
+      if (this.net) { const q = this.q[g.k]; if (q) { delete this.q[g.k]; this.onMessage(q); } }
+    }
+    shoot(side, vx, vy, fromBot) {
+      if (this.state !== 'prep' || this.g.turn !== side) return;
+      if (!fromBot) { if (this.net && side !== this.me) return; if (this.mode !== 'two' && !this.net && side !== 0) return; }   // only your own turn; the computer shoots through fromBot
+      const c = E.clampShot(vx, vy); if (this.net) Net.link.send({ type: 'shot', i: this.g.k, vx: c.vx, vy: c.vy });
+      this.launch(c.vx, c.vy); SFX.hit();
+    }
+    launch(vx, vy) { this.ev = E.begin(this.g, vx, vy); this.state = 'roll'; this.acc = 0; this.ff = false; this.shotBy = this.g.turn; this.msg.textContent = ''; this.botAim = null; this.nb = 0; }
+    finishRoll() {
+      const g = this.g, who = this.ev.who, b = g.b[who], h = this.hole(); const wasWet = !!b.wet, bx = b.x, by = b.y;
+      const r = E.settle(g, this.ev); this.rep = r; this.state = 'res'; this.resT = 0;
+      if (r.in) { this.fx.push({ x: h.hole[0], y: h.hole[1], t: 0, c: '255,255,255' }); this.note = { txt: g.st[who] === 1 ? T('golf_ace') : T('golf_in'), t: 0, c: '#6dffa0' }; SFX.win(); vib(20); }
+      else if (r.wet) { this.fx.push({ x: bx, y: by, t: 0, c: '120,190,255' }); this.note = { txt: T('golf_wet'), t: 0, c: '#8ecbff' }; SFX.lose(); vib(30); }
+      else if (r.pick) { this.note = { txt: T('golf_pick'), t: 0, c: '#ffd877' }; }
+      if (r.holeEnd && g.np > 1) { this.note = { txt: g.hres[g.hres.length - 1][0] + ' : ' + g.hres[g.hres.length - 1][1], t: 0, c: '#ffffff' }; }
+    }
+    advance() {
+      const g = this.g; let end = null;
+      if (this.mode === 'solo') { const st = E.levelState(this.lv, g); if (st.done) end = st; } else { const d = E.decided(g); if (d !== null) end = { res: d }; }
+      if (end) { this.state = 'end'; setTimeout(() => this.finish(end), 400); return; }
+      if (g.phase === 'holeEnd') E.nextHole(g);
+      if (this.net) Net.link.send({ type: 'sum', k: g.k, h: this.hash() });
+      this.beginTurn();
+    }
+    hash() { const g = this.g; let h = 0; for (const b of g.b) h = (h * 31 + Math.round(b.x * 1e6) + Math.round(b.y * 1e6) * 7 + b.in) % 1e12; return (h * 31 + g.clock + g.st[0] * 3 + g.st[1] * 5 + g.hi * 7) % 1e12; }
+    onMessage(m) {
+      if (m.type === 'shot') {
+        const opp = 1 - this.me;
+        if (m.i === this.g.k && this.state === 'prep' && this.g.turn === opp) { const c = E.clampShot(m.vx, m.vy); this.launch(c.vx, c.vy); }
+        else if (m.i > this.g.k && this.state !== 'end' && this.state !== 'fin') this.q[m.i] = m;
+      } else if (m.type === 'sum') { if (m.k === this.g.k && this.state !== 'roll' && this.state !== 'res' && m.h !== this.hash()) { this.desync = true; } }
+      else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('golf'); let html = '', btns = ''; const g = this.g, sc = `⛳ ${g.tot[0]} : ${g.tot[1]}`;
+      if (m === 'solo') {
+        const win = !!end.win, n = this.lv.n;
+        if (win) { if (end.stars > (st.lv[n] || 0)) st.lv[n] = end.stars; st.games++; st.wins++; saveP(); Meta.after('golf', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(end.stars)}${'☆'.repeat(3 - end.stars)}</div><p>⛳ ${g.st[0]} / ${T('golf_par')} ${this.lv.par}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('golf', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>⛳ ${g.st[0]} / ${T('golf_par')} ${this.lv.par}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (r === 'draw') title = T('draw'); else if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('golf', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('golf', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>${sc}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; this.paused = true; const online = this.net;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      if (!this.paused) {
+        if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.beginTurn(); SFX.go(); } }
+        else if (this.state === 'prep') {
+          if (this.botAim) { this.botAim.t += dt; if (this.botAim.t >= this.botAim.wait) { const b = this.botAim; this.botAim = null; this.shoot(1, b.vx, b.vy, true); } }
+        } else if (this.state === 'roll') {
+          this.acc += dt * (this.ff ? 3 : 1) * (this.spd < 1 ? 1 / this.spd : 1); let n = Math.min(STEPS_PER_FRAME * (this.ff || this.spd < 1 ? 3 : 1), Math.floor(this.acc / E.DT)); this.acc -= n * E.DT; const b = this.g.b[this.ev.who], h = this.hole();
+          while (n-- > 0) { const mv = E.step(b, h); this.ev.steps++; if (b.nb !== this.nb) { this.nb = b.nb; if (!this.ff) SFX.tap(); } if (!mv || this.ev.steps > MAXSTEPS) { this.finishRoll(); break; } }
+        } else if (this.state === 'res') { this.resT += dt; if (this.resT > (this.rep && this.rep.holeEnd ? 2.0 : 1.0) * this.spd) this.advance(); }
+        this.views.forEach(v => { if (v.rep && this.canAct(v)) { v.rep.t -= dt; if (v.rep.t <= 0) { v.rep.t = 0.05; this.rotate(v.side, v.rep.k * STEP); } } }); this.fx.forEach(d => d.t += dt); this.fx = this.fx.filter(d => d.t < 0.6); if (this.note) { this.note.t += dt; if (this.note.t > 1.8) this.note = null; }
+      }
+      this.t += dt; this.draw(); this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    /* ---------- drawing ---------- */
+    draw() { let re = false; this.views.forEach(v => { const r = v.box.getBoundingClientRect(); if (!v.lb || Math.abs(v.lb[0] - r.width) > 1 || Math.abs(v.lb[1] - r.height) > 1) { v.lb = [r.width, r.height]; re = true; } }); if (re) this.layout();      // the box can change after the first layout (hint, voice bar)
+      this.views.forEach(v => { if (v.ctx) this.drawView(v); }); this.stat(); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return; const g = this.g;
+      if (this.mode === 'solo') st.innerHTML = `<span>${this.lv.n}<small>${T('s_level')}</small></span><span>${g.st[0]}/${this.lv.limit}<small>${T('golf_strokes')}</small></span><span>${this.lv.par}<small>${T('golf_par')}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">${g.tot[0] + g.st[0]}<small>${esc(this.nameOf(0))}${g.turn === 0 && !g.fin[0] ? ' ◀' : ''}</small></span><span>${g.hi + 1}/${g.holes.length}<small>${T('golf_hole')} · ${T('golf_par')} ${this.hole().par}</small></span><span style="color:${TEAM[1]}">${g.tot[1] + g.st[1]}<small>${esc(this.nameOf(1))}${g.turn === 1 && !g.fin[1] ? ' ◀' : ''}</small></span>`;
+    }
+    ballAt(c, v, x, y, side, alpha) {
+      const [u, w] = this.toC(v, x, y), cs = v.cs, R = E.BR * cs, px = u * cs, py = w * cs, col = TEAM[side];
+      c.save(); c.globalAlpha = alpha === undefined ? 1 : alpha; c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(px + R * 0.2, py + R * 0.3, R * 1.0, R * 0.85, 0, 0, 7); c.fill();
+      const gr = c.createRadialGradient(px - R * 0.35, py - R * 0.4, R * 0.1, px, py, R * 1.05); gr.addColorStop(0, '#fff'); gr.addColorStop(0.3, '#f4f4f4'); gr.addColorStop(1, '#b9bec8'); c.fillStyle = gr; c.beginPath(); c.arc(px, py, R, 0, 7); c.fill();
+      c.strokeStyle = col; c.lineWidth = Math.max(1.5, R * 0.34); c.beginPath(); c.arc(px, py, R * 0.82, 0, 7); c.stroke(); c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = Math.max(1, R * 0.08); c.beginPath(); c.arc(px, py, R, 0, 7); c.stroke(); c.restore();
+    }
+    rectPx(v, a) { const p = this.toC(v, a[0], a[1]), q = this.toC(v, a[2], a[3]), cs = v.cs; return [Math.min(p[0], q[0]) * cs, Math.min(p[1], q[1]) * cs, Math.abs(p[0] - q[0]) * cs, Math.abs(p[1] - q[1]) * cs]; }
+    drawView(v) {
+      const c = v.ctx, cs = v.cs, g = this.g, h = this.hole(), bgA = Art.get('bg-golf'), P = (x, y) => { const q = this.toC(v, x, y); return [q[0] * cs, q[1] * cs]; };
+      c.clearRect(0, 0, v.cw, v.ch); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, v.cw, v.ch, 14); c.clip();
+      if (bgA) { c.drawImage(bgA, 0, 0, v.cw, v.ch); } else { c.fillStyle = '#17331f'; c.fillRect(0, 0, v.cw, v.ch); }
+      const a = P(0, 0), b = P(E.W, E.H), x0 = Math.min(a[0], b[0]), y0 = Math.min(a[1], b[1]), w = Math.abs(a[0] - b[0]), hh = Math.abs(a[1] - b[1]);
+      // frame, grass with mowing stripes
+      const wall = Art.get('golf-wall'); c.fillStyle = wall ? c.createPattern(wall, 'repeat') : '#7a5230'; c.beginPath(); c.roundRect(x0 - M * cs * 0.98, y0 - M * cs * 0.98, w + M * cs * 1.96, hh + M * cs * 1.96, cs * 0.7); c.fill(); c.strokeStyle = '#3a200d'; c.lineWidth = cs * 0.12; c.stroke();
+      const grass = Art.get('golf-grass'); if (grass) { c.fillStyle = c.createPattern(grass, 'repeat'); c.fillRect(x0, y0, w, hh); c.fillStyle = 'rgba(0,0,0,.12)'; c.fillRect(x0, y0, w, hh); } else { c.fillStyle = '#2f9a48'; c.fillRect(x0, y0, w, hh); }
+      for (let k = 0; k < E.W; k += 4) { const p = P(k, 0), q = P(k + 2, E.H); c.fillStyle = 'rgba(255,255,255,.055)'; c.fillRect(Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.abs(p[0] - q[0]), Math.abs(p[1] - q[1])); }
+      // sand, ice, water
+      const sandA = Art.get('golf-sand'); h.sand.forEach((s, si) => { const r = this.rectPx(v, s); c.fillStyle = sandA ? c.createPattern(sandA, 'repeat') : '#e5cf8a'; c.fillRect(r[0], r[1], r[2], r[3]); if (!sandA) { const R2 = E.prng(h.n * 31 + si); c.fillStyle = 'rgba(150,115,50,.45)'; for (let k = 0; k < 46; k++) { const px = r[0] + R2() * r[2], py = r[1] + R2() * r[3]; c.fillRect(px, py, cs * 0.07, cs * 0.07); } } c.strokeStyle = 'rgba(120,90,40,.6)'; c.lineWidth = cs * 0.05; c.strokeRect(r[0], r[1], r[2], r[3]); });
+      h.ice.forEach(s => { const r = this.rectPx(v, s); const gr = c.createLinearGradient(r[0], r[1], r[0] + r[2], r[1] + r[3]); gr.addColorStop(0, '#d8f4fb'); gr.addColorStop(1, '#a9dcec'); c.fillStyle = gr; c.fillRect(r[0], r[1], r[2], r[3]); c.save(); c.beginPath(); c.rect(r[0], r[1], r[2], r[3]); c.clip(); c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = cs * 0.06; for (let k = -r[3]; k < r[2]; k += cs * 1.6) { c.beginPath(); c.moveTo(r[0] + k, r[1] + r[3]); c.lineTo(r[0] + k + r[3] * 0.6, r[1]); c.stroke(); } c.restore(); c.strokeStyle = 'rgba(80,140,170,.7)'; c.lineWidth = cs * 0.05; c.strokeRect(r[0], r[1], r[2], r[3]); });
+      h.water.forEach(s => { const r = this.rectPx(v, s); c.fillStyle = '#2d78c8'; c.fillRect(r[0], r[1], r[2], r[3]); c.save(); c.beginPath(); c.rect(r[0], r[1], r[2], r[3]); c.clip(); c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = cs * 0.06; for (let yy = r[1] + cs * 0.5; yy < r[1] + r[3]; yy += cs * 0.9) { c.beginPath(); for (let xx = r[0]; xx <= r[0] + r[2]; xx += cs * 0.4) { const wy = yy + Math.sin(xx / cs * 1.3 + this.t * 2 + yy / cs) * cs * 0.1; xx === r[0] ? c.moveTo(xx, wy) : c.lineTo(xx, wy); } c.stroke(); } c.restore(); c.strokeStyle = '#1b4f8c'; c.lineWidth = cs * 0.07; c.strokeRect(r[0], r[1], r[2], r[3]); });
+      // tee mark and hole
+      { const q = P(h.tee[0], h.tee[1]); c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = cs * 0.06; c.beginPath(); c.arc(q[0], q[1], cs * 0.55, 0, 7); c.stroke(); }
+      { const q = P(h.hole[0], h.hole[1]), R = E.HR * cs; c.fillStyle = '#0b0f0c'; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill(); c.strokeStyle = '#d9e8d4'; c.lineWidth = cs * 0.07; c.stroke(); }
+      // walls, bumpers, gates
+      const post = (r, col, rim) => { c.fillStyle = col; c.beginPath(); c.roundRect(r[0], r[1], r[2], r[3], cs * 0.12); c.fill(); c.strokeStyle = rim; c.lineWidth = cs * 0.06; c.stroke(); };
+      h.walls.forEach(wl => { const r = this.rectPx(v, wl); if (wall) { c.save(); c.fillStyle = c.createPattern(wall, 'repeat'); c.beginPath(); c.roundRect(r[0], r[1], r[2], r[3], cs * 0.12); c.fill(); c.restore(); c.strokeStyle = '#3a200d'; c.lineWidth = cs * 0.07; c.stroke(); } else post(r, '#8a5a34', '#3a200d'); c.fillStyle = 'rgba(255,255,255,.18)'; c.fillRect(r[0] + cs * 0.06, r[1] + cs * 0.06, r[2] - cs * 0.12, Math.min(cs * 0.12, r[3] - cs * 0.12)); });
+      h.bumpers.forEach(o => { const q = P(o[0], o[1]), R = o[2] * cs; const gr = c.createRadialGradient(q[0] - R * 0.3, q[1] - R * 0.35, R * 0.1, q[0], q[1], R); gr.addColorStop(0, '#ff9a86'); gr.addColorStop(1, '#c4332a'); c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.arc(q[0] + R * 0.12, q[1] + R * 0.2, R, 0, 7); c.fill(); c.fillStyle = gr; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill(); c.strokeStyle = '#fff'; c.lineWidth = cs * 0.1; c.stroke(); c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = cs * 0.06; c.beginPath(); c.arc(q[0], q[1], R * 0.45, 0, 7); c.stroke(); });
+      const clk = this.state === 'roll' && this.ev ? g.b[this.ev.who].c : g.clock;
+      h.gates.forEach(gt => { const r = this.rectPx(v, E.gateRect(gt, clk)); post(r, '#f2c230', '#5a4300'); c.save(); c.beginPath(); c.rect(r[0], r[1], r[2], r[3]); c.clip(); c.strokeStyle = 'rgba(40,30,0,.75)'; c.lineWidth = cs * 0.2; const L = r[2] + r[3]; for (let k = -L; k < L; k += cs * 0.7) { c.beginPath(); c.moveTo(r[0] + k, r[1]); c.lineTo(r[0] + k + r[3], r[1] + r[3]); c.stroke(); } c.restore(); });
+      // flag
+      { const q = P(h.hole[0], h.hole[1]); c.strokeStyle = '#eee'; c.lineWidth = cs * 0.09; c.beginPath(); c.moveTo(q[0], q[1]); c.lineTo(q[0], q[1] - cs * 2.1); c.stroke(); c.fillStyle = '#e8584f'; c.beginPath(); c.moveTo(q[0], q[1] - cs * 2.1); c.lineTo(q[0] + cs * 1.0, q[1] - cs * 1.75); c.lineTo(q[0], q[1] - cs * 1.4); c.closePath(); c.fill(); }
+      // aiming (only the player whose turn it is, on their own view)
+      const can = this.canAct(v), side = v.side; let sh = null;
+      if (can) { const A = this.sa[side], sp = this.powerSpeed(A.p); sh = { vx: Math.cos(A.a) * sp, vy: Math.sin(A.a) * sp, p: A.p }; }
+      else if (this.botAim && v.side === 0) sh = { vx: this.botAim.vx, vy: this.botAim.vy, p: Math.min(1, Math.sqrt(Math.max(0, (Math.sqrt(this.botAim.vx ** 2 + this.botAim.vy ** 2) - E.VMIN) / (E.VMAX - E.VMIN)))) };
+      const tb = g.b[g.turn];
+      if (sh && this.state === 'prep' && !tb.in) {
+        c.save(); c.beginPath(); c.rect(0, 0, v.cw, this.strip(v).base * cs); c.clip();      // the aim line and the putter stay above the controls
+        const pv = E.preview(g, sh.vx, sh.vy); c.fillStyle = 'rgba(255,255,255,.9)'; pv.pts.forEach((pt, i) => { if (i === 0) return; const q = P(pt[0], pt[1]); c.beginPath(); c.arc(q[0], q[1], cs * 0.09, 0, 7); c.fill(); });
+        { const L = Math.sqrt(sh.vx * sh.vx + sh.vy * sh.vy), ux = sh.vx / L, uy = sh.vy / L, back = 0.45 + sh.p * 1.8, st0 = P(tb.x - ux * back, tb.y - uy * back), st1 = P(tb.x - ux * (back + 5), tb.y - uy * (back + 5)); const ang = Math.atan2(st1[1] - st0[1], st1[0] - st0[0]);
+          c.strokeStyle = '#cfd3da'; c.lineWidth = cs * 0.12; c.lineCap = 'round'; c.beginPath(); c.moveTo(st0[0], st0[1]); c.lineTo(st1[0], st1[1]); c.stroke();
+          c.save(); c.translate(st0[0], st0[1]); c.rotate(ang + Math.PI); c.fillStyle = '#3a3f4b'; c.beginPath(); c.roundRect(-cs * 0.12, -cs * 0.55, cs * 0.34, cs * 1.1, cs * 0.08); c.fill(); c.strokeStyle = '#e8a735'; c.lineWidth = cs * 0.06; c.stroke(); c.restore(); }
+        c.restore();
+      }
+      // balls: the player who is not on turn is drawn fainter; a ball in the hole is gone
+      for (let i = g.np - 1; i >= 0; i--) { const bl = g.b[i]; if (bl.in) continue; if (i === g.turn) continue; this.ballAt(c, v, bl.x, bl.y, i, 0.75); }
+      { const bl = g.b[g.turn]; if (!bl.in) this.ballAt(c, v, bl.x, bl.y, g.turn); }
+      if (g.np > 1 || this.mode === 'solo') { /* a ball that just dropped is shown for a moment by the ring below */ }
+      this.fx.forEach(d => { const q = P(d.x, d.y), k = d.t / 0.6; c.strokeStyle = `rgba(${d.c},${1 - k})`; c.lineWidth = cs * 0.14; c.beginPath(); c.arc(q[0], q[1], cs * (0.4 + k * 1.6), 0, 7); c.stroke(); });
+      // controls strip under the course (only for the player who may act)
+      { const st = this.strip(v), A = this.sa[v.side], on = can && this.mine().includes(v.side), rr = (x, w2, fill, txt) => { c.fillStyle = fill; c.beginPath(); c.roundRect(x * cs, st.y * cs, w2 * cs, st.h * cs, cs * 0.35); c.fill(); c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = cs * 0.05; c.stroke(); if (txt) { c.fillStyle = '#fff'; c.font = `900 ${cs * 0.8}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(txt, (x + w2 / 2) * cs, (st.y + st.h / 2) * cs + cs * 0.04); } };
+        c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(0, st.base * cs, v.cw, v.ch - st.base * cs);
+        if (on) {
+          rr(st.l.x, st.l.w, 'rgba(255,255,255,.18)', '◀'); rr(st.r.x, st.r.w, 'rgba(255,255,255,.18)', '▶'); rr(st.bar.x, st.bar.w, 'rgba(0,0,0,.45)');
+          c.fillStyle = A.p > 0.8 ? '#ff7a5c' : '#ffd877'; c.beginPath(); c.roundRect(st.bar.x * cs, st.y * cs, Math.max(st.h * cs * 0.5, st.bar.w * A.p * cs), st.h * cs, cs * 0.35); c.fill();
+          c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = cs * 0.04; [0.25, 0.5, 0.75].forEach(f => { c.beginPath(); c.moveTo((st.bar.x + st.bar.w * f) * cs, (st.y + st.h * 0.2) * cs); c.lineTo((st.bar.x + st.bar.w * f) * cs, (st.y + st.h * 0.8) * cs); c.stroke(); });
+          rr(st.hit.x, st.hit.w, '#e8a735', ''); c.fillStyle = '#1b1b1f'; c.font = `900 ${cs * 0.7}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(T('golf_hit'), (st.hit.x + st.hit.w / 2) * cs, (st.y + st.h / 2) * cs + cs * 0.04);
+        } }
+      // waiting veil on the inactive view in two-player mode, and the result banner
+      if (this.mode === 'two' && this.state !== 'count' && this.g.turn !== v.side) { c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(0, 0, v.cw, v.ch); }
+      if (this.note) { const k = Math.min(1, this.note.t * 4); c.save(); c.globalAlpha = Math.min(1, (1.8 - this.note.t) * 2) * k; c.font = `900 ${cs * 1.4}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.22; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.7)'; c.fillStyle = this.note.c; const q = P(E.W / 2, E.H / 2); c.strokeText(this.note.txt, q[0], q[1]); c.fillText(this.note.txt, q[0], q[1]); c.restore(); }
+      c.restore();
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'golf'; setPlayBg('golf'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.golf = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#7a5230"/><rect x="6" y="6" width="78" height="58" rx="6" fill="#2f9a48"/><rect x="40" y="6" width="6" height="30" fill="#8a5a34"/><circle cx="68" cy="34" r="5.5" fill="#0b0f0c"/><path d="M68 34 V16" stroke="#eee" stroke-width="1.6"/><path d="M68 16 L78 20 L68 24 Z" fill="#e8584f"/><circle cx="20" cy="46" r="4.5" fill="#fff" stroke="#4f8be8" stroke-width="1.8"/><path d="M8 58 L16 50" stroke="#cfd3da" stroke-width="2.2" stroke-linecap="round"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'golf', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱' };
+const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
