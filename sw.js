@@ -20,9 +20,9 @@
 })();
 
 /* SportNest service worker — network-first for pages (never a bare error), cache-first for files */
-const VERSION = 'sportnest-1.6.0';
+const VERSION = 'sportnest-1.6.1';
 const CORE = ['./', 'manifest.json', 'icon-192.png', 'icon-512.png', 'privacy_policy.html'];
-const ART = ["art/bg-box.webp","art/bg-dart.webp","art/bg-hoop.webp","art/bg-pen.webp","art/box-head1.webp","art/box-head2.webp","art/dart-dart.webp","art/golf-grass.webp","art/golf-sand.webp","art/golf-wall.webp","art/hoop-ball.webp","art/hoop-def.webp","art/hoop-player.webp","art/pen-ball.webp","art/pen-dummy.webp","art/pen-keeper.webp","art/snk-cue.webp","art/snk-felt.webp","art/snk-wood.webp","art/tile-box.webp","art/tile-dart.webp","art/tile-golf.webp","art/tile-hoop.webp","art/tile-pen.webp","art/tile-snk.webp"];
+const ART = ["art/bg-bowl.webp","art/bg-box.webp","art/bg-dart.webp","art/bg-hoop.webp","art/bg-pen.webp","art/bowl-lane.webp","art/box-head1.webp","art/box-head2.webp","art/dart-dart.webp","art/golf-grass.webp","art/golf-sand.webp","art/golf-wall.webp","art/hoop-ball.webp","art/hoop-def.webp","art/hoop-player.webp","art/pen-ball.webp","art/pen-dummy.webp","art/pen-keeper.webp","art/snk-cue.webp","art/snk-felt.webp","art/snk-wood.webp","art/tile-bowl.webp","art/tile-box.webp","art/tile-dart.webp","art/tile-golf.webp","art/tile-hoop.webp","art/tile-pen.webp","art/tile-snk.webp"];
 const ROOT = new URL('./', self.registration.scope).pathname;
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => Promise.allSettled(CORE.concat(ART).map(u => c.add(u)))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
