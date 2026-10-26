@@ -169,6 +169,7 @@ input.txt:focus{border-color:var(--acc)}
 #play[data-bg=dart]{background:linear-gradient(180deg,#2a1f33,#3a2a46 50%,#25303f)}
 #play[data-bg=box]{background:linear-gradient(180deg,#1b1f33,#3a3350 50%,#34406a)}
 #play[data-bg=snk]{background:linear-gradient(180deg,#2a1a12,#3a2316 50%,#1d140e)}
+#play[data-bg=bowl]{background:linear-gradient(180deg,#14172a,#202545 50%,#0e1020)}
 #play[data-bg=golf]{background:linear-gradient(180deg,#12301c,#1b4a2a 50%,#0f2a19)}
 .pen-views{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
 .pen-views .pv{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
@@ -1177,6 +1178,183 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   }
   const API = { W, H, BR, HR, DT, VMAX, VMIN, MAXS, NH, SIG, PSIG, prng, gauss, clamp, holeDef, gateRect, mkBall, clampShot, qv, step, newGame, startHole, nextHole, begin, run, settle, shoot, decided, matchHoles, makeLevels, levelState, distField, dfAt, trial, evalShot, search, botShot, preview };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Golf = API;
+})(typeof self !== 'undefined' ? self : this);
+
+/* ===== engines/bowl.js ===== */
+/* SportNest — bowling engine (pure, deterministic).
+   Fixed time step 1/240 s, only + - * / and sqrt inside the simulation (no Math.random, no trig), so two phones that get the same
+   delivery (start y, vx, vy, spin — each rounded to 3 decimals) compute exactly the same pins. Top-down view: x runs from the foul line
+   to the pit, y across the lane. The ball hooks after the oil (x > HOOKX) in the direction of its spin. Pins that moved far enough count as down;
+   standing pins go back to their own spots for the next ball. Scoring follows real bowling over 5 frames (strike and spare bonuses, extra balls in the last frame). */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const LEN = 13.5, WD = 5, BR = 0.30, PR = 0.16, DT = 1 / 240, VMIN = 7, VMAX = 17, X0 = 0.8, HX = 9.0, DXR = 0.7, DYP = 0.8, GUT = 0.42, HOOKX = 4.5, HK = 3.6, SX = 0.6;
+  const MB = 6, E_BP = 0.8, E_PP = 0.9, E_POST = 0.5, PF = 2.5, PD = 0.25, STOPP = 0.05, MOVED = 0.25, MAXSTEPS = 240 * 12, FRAMES = 5, YMIN = 0.9, YMAX = WD - 0.9;
+  const pinPos = n => { let r = 0; while ((r + 1) * (r + 2) / 2 < n) r++; const k = n - 1 - r * (r + 1) / 2; return [HX + r * DXR, WD / 2 + (k - r / 2) * DYP]; };
+  /* ---------- the lane ---------- */
+  function make(pins, posts, oil) {      // pins: list of pin numbers 1..10
+    const n = pins.length, s = { n, x: new Float64Array(n), y: new Float64Array(n), vx: new Float64Array(n), vy: new Float64Array(n), on: new Uint8Array(n), hx: new Float64Array(n), hy: new Float64Array(n), num: pins.slice(), posts: posts || [], oil: oil || [],
+      bx: X0, by: WD / 2, bvx: 0, bvy: 0, spin: 0, gut: 0, bout: 1, c: 0, hit: 0 };
+    pins.forEach((p, i) => { const q = pinPos(p); s.x[i] = s.hx[i] = q[0]; s.y[i] = s.hy[i] = q[1]; s.on[i] = 1; });
+    return s;
+  }
+  const standing = s => { let k = 0; for (let i = 0; i < s.n; i++) if (s.on[i]) k++; return k; };
+  const qv = v => Math.round(v * 1000) / 1000;
+  function clampShot(y, vx, vy, spin) {
+    y = clamp(+y || WD / 2, YMIN, YMAX); vx = +vx || 0; vy = +vy || 0; let sp = Math.sqrt(vx * vx + vy * vy);
+    if (vx < 1) { vx = 1; sp = Math.sqrt(vx * vx + vy * vy); }           // always goes forward
+    if (sp > VMAX) { vx = vx / sp * VMAX; vy = vy / sp * VMAX; sp = VMAX; } if (sp < VMIN) { vx = vx / sp * VMIN; vy = vy / sp * VMIN; }
+    if (vy > vx * 0.45) vy = vx * 0.45; if (vy < -vx * 0.45) vy = -vx * 0.45;
+    return { y: qv(y), vx: qv(vx), vy: qv(vy), spin: qv(clamp(+spin || 0, -1, 1)) };
+  }
+  function begin(s, y, vx, vy, spin) { const c = clampShot(y, vx, vy, spin); s.bx = X0; s.by = c.y; s.bvx = c.vx; s.bvy = c.vy; s.spin = c.spin; s.gut = 0; s.bout = 0; s.c = 0; s.hit = 0; for (let i = 0; i < s.n; i++) { s.vx[i] = 0; s.vy[i] = 0; } return c; }
+  function postHit(px, py, vx, vy, o, e, r) {     // circle (radius r) against a fixed post; returns [x, y, vx, vy] or null
+    const dx = px - o[0], dy = py - o[1], rr = o[2] + r, d2 = dx * dx + dy * dy; if (d2 >= rr * rr || d2 < 1e-12) return null; const d = Math.sqrt(d2), nx = dx / d, ny = dy / d; let nvx = vx, nvy = vy; const vn = vx * nx + vy * ny; if (vn < 0) { nvx = vx - (1 + e) * vn * nx; nvy = vy - (1 + e) * vn * ny; } return [o[0] + nx * rr, o[1] + ny * rr, nvx, nvy];
+  }
+  function step(s) {         // one fixed step; returns 1 while the ball or any pin is moving
+    const n = s.n; s.c++; let moving = 0;
+    if (!s.bout) {
+      if (s.gut) { s.bx += s.bvx * DT; if (s.bx > LEN - 0.2) s.bout = 1; else moving = 1; }
+      else {
+        let oil = 0; for (let i = 0; i < s.oil.length; i++) if (s.bx >= s.oil[i][0] && s.bx <= s.oil[i][1]) oil = 1;
+        if (s.bx > HOOKX && !oil) s.bvy += s.spin * HK * DT;
+        s.bvx -= 0.03 * s.bvx * DT; s.bx += s.bvx * DT; s.by += s.bvy * DT;
+        if (s.by < GUT) { s.gut = 1; s.by = GUT - 0.2; s.bvy = 0; } else if (s.by > WD - GUT) { s.gut = 1; s.by = WD - GUT + 0.2; s.bvy = 0; }
+        else {
+          for (let k = 0; k < s.posts.length; k++) { const r = postHit(s.bx, s.by, s.bvx, s.bvy, s.posts[k], 0.8, BR); if (r) { s.bx = r[0]; s.by = r[1]; s.bvx = r[2]; s.bvy = r[3]; } }
+          for (let i = 0; i < n; i++) {
+            if (!s.on[i]) continue; const dx = s.x[i] - s.bx, dy = s.y[i] - s.by, rr = BR + PR, d2 = dx * dx + dy * dy; if (d2 >= rr * rr || d2 < 1e-12) continue;
+            const d = Math.sqrt(d2), nx = dx / d, ny = dy / d, ov = rr - d, ib = 1 / MB, ip = 1, tot = ib + ip; s.bx -= nx * ov * ib / tot; s.by -= ny * ov * ib / tot; s.x[i] += nx * ov * ip / tot; s.y[i] += ny * ov * ip / tot;
+            const vn = (s.vx[i] - s.bvx) * nx + (s.vy[i] - s.bvy) * ny; if (vn < 0) { const j = -(1 + E_BP) * vn / tot; s.bvx -= j * ib * nx; s.bvy -= j * ib * ny; s.vx[i] += j * ip * nx; s.vy[i] += j * ip * ny; }
+          }
+        }
+        if (s.bx > LEN - BR) s.bout = 1; else if (s.bvx * s.bvx + s.bvy * s.bvy < 1) s.bout = 1; else moving = 1;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (!s.on[i]) continue; let vx = s.vx[i], vy = s.vy[i];
+      if (vx !== 0 || vy !== 0) {
+        const sp = Math.sqrt(vx * vx + vy * vy), ns = sp - (PF + PD * sp) * DT; if (ns <= STOPP) { vx = 0; vy = 0; } else { const f = ns / sp; vx *= f; vy *= f; }
+        s.vx[i] = vx; s.vy[i] = vy; s.x[i] += vx * DT; s.y[i] += vy * DT;
+        for (let k = 0; k < s.posts.length; k++) { const r = postHit(s.x[i], s.y[i], s.vx[i], s.vy[i], s.posts[k], E_POST, PR); if (r) { s.x[i] = r[0]; s.y[i] = r[1]; s.vx[i] = r[2]; s.vy[i] = r[3]; } }
+        if (s.y[i] < 0.15 || s.y[i] > WD - 0.15 || s.x[i] > LEN - 0.15 || s.x[i] < 4) { s.on[i] = 0; s.vx[i] = 0; s.vy[i] = 0; continue; }
+        if (vx !== 0 || vy !== 0) moving = 1;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (!s.on[i]) continue; const mi = s.vx[i] !== 0 || s.vy[i] !== 0;
+      for (let j = i + 1; j < n; j++) {
+        if (!s.on[j]) continue; if (!mi && s.vx[j] === 0 && s.vy[j] === 0) continue;
+        const dx = s.x[j] - s.x[i], dy = s.y[j] - s.y[i], rr = 2 * PR, d2 = dx * dx + dy * dy; if (d2 >= rr * rr || d2 < 1e-12) continue;
+        const d = Math.sqrt(d2), nx = dx / d, ny = dy / d, ov = (rr - d) * 0.5; s.x[i] -= nx * ov; s.y[i] -= ny * ov; s.x[j] += nx * ov; s.y[j] += ny * ov;
+        const vn = (s.vx[j] - s.vx[i]) * nx + (s.vy[j] - s.vy[i]) * ny; if (vn < 0) { const jj = -(1 + E_PP) * vn * 0.5; s.vx[i] -= jj * nx; s.vy[i] -= jj * ny; s.vx[j] += jj * nx; s.vy[j] += jj * ny; moving = 1; }
+      }
+    }
+    return moving;
+  }
+  function run(s, maxSteps) { let n = maxSteps || MAXSTEPS, steps = 0; while (n-- > 0) { steps++; if (!step(s)) break; } return steps; }
+  function settle(s) {       // count the pins down, send the standing ones back to their spots
+    let down = 0; const gone = [];
+    for (let i = 0; i < s.n; i++) {
+      if (!s.on[i]) continue; const dx = s.x[i] - s.hx[i], dy = s.y[i] - s.hy[i];
+      if (dx * dx + dy * dy > MOVED * MOVED) { s.on[i] = 0; down++; gone.push(i); } else { s.x[i] = s.hx[i]; s.y[i] = s.hy[i]; }
+      s.vx[i] = 0; s.vy[i] = 0;
+    }
+    for (let i = 0; i < s.n; i++) if (!s.on[i] && gone.indexOf(i) < 0) { /* already swept off during the roll */ }
+    return down;
+  }
+  const countDown = (s, before) => before - standing(s);
+  /* ---------- a delivery on a game: returns pins down ---------- */
+  function deliver(s, y, vx, vy, spin) { const before = standing(s); begin(s, y, vx, vy, spin); run(s); settle(s); return before - standing(s); }
+  /* ---------- scoring (real bowling, 5 frames) ---------- */
+  function where(rolls, F) {
+    F = F || FRAMES; let i = 0;
+    for (let f = 0; f < F - 1; f++) { if (i >= rolls.length) return { f, b: 0, rack: true, done: false }; if (rolls[i] === 10) { i++; continue; } if (i + 1 >= rolls.length) return { f, b: 1, rack: false, done: false }; i += 2; }
+    const f = F - 1, r = rolls.slice(i);
+    if (r.length === 0) return { f, b: 0, rack: true, done: false };
+    if (r.length === 1) return { f, b: 1, rack: r[0] === 10, done: false };
+    if (r.length === 2) { if (r[0] === 10) return { f, b: 2, rack: r[1] === 10, done: false }; if (r[0] + r[1] === 10) return { f, b: 2, rack: true, done: false }; return { f, b: 0, rack: true, done: true }; }
+    return { f, b: 0, rack: true, done: true };
+  }
+  function total(rolls, F) {
+    F = F || FRAMES; let i = 0, sc = 0;
+    for (let f = 0; f < F - 1 && i < rolls.length; f++) {
+      if (rolls[i] === 10) { sc += 10 + (rolls[i + 1] || 0) + (rolls[i + 2] || 0); i++; }
+      else if (i + 1 < rolls.length && rolls[i] + rolls[i + 1] === 10) { sc += 10 + (rolls[i + 2] || 0); i += 2; }
+      else { sc += rolls[i] + (rolls[i + 1] || 0); i += 2; }
+    }
+    for (let k = i; k < rolls.length; k++) sc += rolls[k];      // the last frame is a plain sum of its balls
+    return sc;
+  }
+  /* ---------- a match: two players take turns by frames ---------- */
+  function newMatch() { return { s: make([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), rolls: [[], []], turn: 0, k: 0, done: false, last: null }; }
+  function matchAfter(g, full, d) {      // bookkeeping once a ball has been rolled and d pins are down (the UI rolls the ball frame by frame)
+    const p = g.turn; g.rolls[p].push(d); g.k++; const w = where(g.rolls[p]); g.last = { who: p, down: d, strike: full && d === 10, spare: !full && g.s && standing(g.s) === 0 };
+    if (w.rack) g.s = make([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const frameOver = w.b === 0 || w.done;
+    if (w.done && where(g.rolls[1 - p]).done) { g.done = true; return d; }
+    if (frameOver && !where(g.rolls[1 - p]).done) g.turn = 1 - p;
+    return d;
+  }
+  function matchRoll(g, y, vx, vy, spin) { const full = standing(g.s) === 10, d = deliver(g.s, y, vx, vy, spin); return matchAfter(g, full, d); }
+  const matchResult = g => { if (!g.done) return null; const a = total(g.rolls[0]), b = total(g.rolls[1]); return a > b ? 0 : b > a ? 1 : 'draw'; };
+  /* ---------- levels ---------- */
+  const ALL = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const LD = [
+    { pins: ALL, balls: 3, goal: 10 }, { pins: ALL, balls: 2, goal: 10 }, { pins: [1, 2, 3, 5], balls: 2, goal: 4 }, { pins: [10], balls: 2, goal: 1 }, { pins: [7, 9], balls: 2, goal: 2 }, { pins: [4, 5, 6, 7, 8, 9, 10], balls: 2, goal: 6 },
+    { pins: [2, 4, 5, 8], balls: 2, goal: 4 }, { pins: [1, 3, 6, 10], balls: 2, goal: 4 }, { pins: [4, 6, 7, 10], balls: 2, goal: 4 }, { pins: [7, 10], balls: 2, goal: 2 }, { pins: [2, 3, 4, 6, 7, 10], balls: 2, goal: 6 }, { pins: [1, 2, 3, 4, 6, 7, 8, 9, 10], balls: 2, goal: 9 },
+    { pins: ALL, balls: 3, goal: 10, posts: [[9, 2.5, 0.35]] }, { pins: ALL, balls: 3, goal: 10, posts: [[8, 1.6, 0.35], [8, 3.4, 0.35]] }, { pins: [1, 2, 3, 4, 5, 6], balls: 2, goal: 6, posts: [[11, 2.5, 0.4]] }, { pins: ALL, balls: 3, goal: 10, posts: [[6, 1.4, 0.4], [10, 3.6, 0.4], [13, 1.8, 0.3]] },
+    { pins: [7, 8, 9, 10], balls: 2, goal: 4, posts: [[11, 2.5, 0.3]] }, { pins: ALL, balls: 3, goal: 10, posts: [[5, 3.8, 0.4], [8, 1.2, 0.4], [11, 3.8, 0.4], [13.5, 1.2, 0.3]] },
+    { pins: ALL, balls: 2, goal: 10, oil: [[3, 14]] }, { pins: [1, 2, 3, 5, 8], balls: 2, goal: 5, oil: [[3, 14]] }, { pins: ALL, balls: 3, goal: 10, oil: [[3, 14]], posts: [[9, 2.5, 0.4]] }, { pins: [2, 4, 5, 8, 9], balls: 2, goal: 5, oil: [[3, 14]], posts: [[10, 1.5, 0.35]] },
+    { pins: [4, 6, 7, 10], balls: 2, goal: 4, oil: [[3, 14]], posts: [[9, 2.5, 0.4]] }, { pins: ALL, balls: 3, goal: 10, oil: [[3, 14]], posts: [[7, 1.5, 0.35], [7, 3.5, 0.35], [12, 0.9, 0.3], [12, 4.1, 0.3]] }
+  ];
+  function makeLevels() {
+    const out = []; for (let n = 1; n <= 24; n++) { const d = LD[n - 1]; out.push({ n, pins: d.pins, posts: (d.posts || []).map(q => [q[0] * SX, q[1], q[2]]), oil: (d.oil || []).map(o => [o[0] * SX, o[1] * SX]), balls: d.balls, goal: d.goal, seed: 5000 + n * 19 }); } return out;
+  }
+  const newLevel = lv => ({ s: make(lv.pins, lv.posts, lv.oil), lv, down: 0, used: 0 });
+  function levelRoll(g, y, vx, vy, spin) { const d = deliver(g.s, y, vx, vy, spin); g.down += d; g.used++; return d; }
+  function levelState(g) {
+    const lv = g.lv; if (g.down >= lv.goal) return { done: true, win: true, stars: g.used === 1 ? 3 : g.used === 2 ? (lv.balls >= 3 ? 2 : 1) : 1 };
+    if (g.used >= lv.balls) return { done: true, win: false, stars: 0 }; return { done: false };
+  }
+  /* ---------- the computer ---------- */
+  const cache = new Map();
+  function sceneKey(s) { let k = s.posts.length + '|' + s.oil.length + '|'; for (let i = 0; i < s.n; i++) k += s.on[i] ? 1 : 0; return k + '|' + s.num.join(',') + '|' + JSON.stringify(s.posts) + JSON.stringify(s.oil); }
+  function copyOn(s) { const c = make(s.num, s.posts, s.oil); for (let i = 0; i < s.n; i++) c.on[i] = s.on[i]; return c; }
+  const trialSim = { s: null };
+  function tryShot(base, y, ang, spin, sp) {          // ang: slope vy/vx
+    const s = trialSim.s && trialSim.s.n === base.n && trialSim.s.num.join() === base.num.join() && trialSim.s.posts === base.posts && trialSim.s.oil === base.oil ? trialSim.s : (trialSim.s = make(base.num, base.posts, base.oil));
+    for (let i = 0; i < s.n; i++) { s.on[i] = base.on[i]; s.x[i] = s.hx[i]; s.y[i] = s.hy[i]; s.vx[i] = 0; s.vy[i] = 0; }
+    const vx = sp / Math.sqrt(1 + ang * ang); return deliver(s, y, vx, vx * ang, spin);
+  }
+  const YS = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0], AS = [-0.12, -0.1, -0.08, -0.06, -0.04, -0.02, 0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12], SPS = [-1, -0.5, 0, 0.5, 1], SPD = [10, 14];
+  function search(s) {
+    const key = sceneKey(s), hit = cache.get(key); if (hit) return Object.assign({}, hit);
+    const cands = []; let top = -1;
+    for (const y of YS) for (const a of AS) for (const sp of SPS) for (const v of SPD) { const d = tryShot(s, y, a, sp, v); if (d > top) top = d; cands.push({ y, ang: a, spin: sp, sp: v, d }); }
+    // among the best deliveries prefer the one that still works when it is slightly off (a ridge, not a lucky peak)
+    const good = cands.filter(c => c.d >= top - 1).sort((p, q) => q.d - p.d).slice(0, 24); let best = good[0], bs = -1;
+    for (const c of good) { let tot = 0, k = 0; for (const dy of [-0.1, 0, 0.1]) for (const da of [-0.005, 0, 0.005]) { tot += tryShot(s, clamp(c.y + dy, YMIN, YMAX), c.ang + da, c.spin, c.sp); k++; } const sc = tot / k + c.d * 0.3; if (sc > bs) { bs = sc; best = c; } }
+    const b0 = Object.assign({}, best); let bv = bs;     // refine around it for the average, not the single best
+    for (const dy of [-0.1, 0, 0.1]) for (const da of [-0.006, -0.003, 0, 0.003, 0.006]) { const y = clamp(b0.y + dy, YMIN, YMAX), a = b0.ang + da; let tot = 0, k = 0; for (const ey of [-0.08, 0, 0.08]) for (const ea of [-0.004, 0, 0.004]) { tot += tryShot(s, clamp(y + ey, YMIN, YMAX), a + ea, b0.spin, b0.sp); k++; } const d = tryShot(s, y, a, b0.spin, b0.sp), sc = tot / k + d * 0.3; if (sc > bv) { bv = sc; best = { y, ang: a, spin: b0.spin, sp: b0.sp, d }; } }
+    if (cache.size > 300) cache.clear(); cache.set(key, Object.assign({}, best)); return best;
+  }
+  const SIGA = [0, 0.05, 0.03, 0.01, 0.005], SIGY = [0, 0.5, 0.3, 0.12, 0.06], SIGS = [0, 0.4, 0.3, 0.07, 0.03], SIGV = [0, 0.2, 0.08, 0.04, 0.02];
+  function botShot(lvl, s, R) {
+    if (lvl <= 1) { const y = 1 + R() * 3, a = gauss(R) * 0.05, sp = 9 + R() * 6; return clampShot(y, sp, sp * a, (R() - 0.5) * 1.2); }
+    const b = search(s), a = b.ang + gauss(R) * SIGA[lvl], y = b.y + gauss(R) * SIGY[lvl] * 0.5, sp = b.sp * (1 + gauss(R) * SIGV[lvl]), vx = sp / Math.sqrt(1 + a * a);
+    return clampShot(y, vx, vx * a, b.spin + gauss(R) * SIGS[lvl]);
+  }
+  function preview(s, y, vx, vy, spin) {      // path of the ball up to the first pin or post, for the aim line (works on a copy)
+    const c = copyOn(s); const q = clampShot(y, vx, vy, spin); begin(c, q.y, q.vx, q.vy, q.spin); const pts = [[c.bx, c.by]]; let n = 0, hitAt = -1;
+    while (n++ < 900 && !c.bout) { const before = standing(c); step(c); if (n % 8 === 0) pts.push([c.bx, c.by]); let touched = false; for (let i = 0; i < c.n; i++) if (c.on[i] && (c.vx[i] !== 0 || c.vy[i] !== 0)) touched = true; if (touched) { hitAt = n; break; } }
+    pts.push([c.bx, c.by]); return pts;
+  }
+  const API = { LEN, WD, BR, PR, DT, VMIN, VMAX, X0, HX, HK, HOOKX, YMIN, YMAX, GUT, FRAMES, prng, gauss, clamp, pinPos, make, standing, clampShot, qv, begin, step, run, settle, deliver, where, total, newMatch, matchRoll, matchAfter, matchResult, makeLevels, newLevel, levelRoll, levelState, search, tryShot, botShot, preview, copyOn };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Bowl = API;
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/i18n.js ===== */
@@ -2323,10 +2501,38 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_bowl.js ===== */
+/* SportNest — Bowling strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_bowl: 'באולינג', d_bowl: 'מכוונים, מפתלים ומפילים את כל הקיפולים',
+      bowl_help: 'גררו את הכדור לצדדים כדי לבחור נקודת התחלה, הזיזו אצבע על הנתיב כדי לכוון, קבעו פיתול ועוצמה ולחצו הכה', bowl_hit: 'הכה', bowl_help_two: 'כל שחקן מגלגל בתורו מהצד שלו של הטלפון', bowl_wait: 'ממתין לגלגול של היריב…', bowl_think: 'היריב מכוון…',
+      bowl_strike: 'אסטרייק!', bowl_spare: 'ספייר!', bowl_gutter: 'מרזב', bowl_ball: 'כדור', bowl_goal: 'יעד', bowl_frame: 'סיבוב', bowl_none: 'לא נפל כלום',
+      ru_bowl: '<p>בכל כדור מגלגלים כדור לעבר עשרה קיפולים ומנסים להפיל כמה שיותר. כדי להתחיל גוררים את הכדור שמאלה וימינה על קו ההתחלה. אחר כך מזיזים אצבע על הנתיב כדי לסובב את הכוונה, ולכוונון עדין במיוחד יש שני חצים קטנים. הקו המנוקד מראה את דרך הכדור עד הקיפול הראשון.</p><p>הנתיב משומן בתחילתו, ובהמשכו הכדור מתחיל להתפתל לכיוון הפיתול שבחרתם בפס הפיתול. ככה אפשר להיכנס לכיס שבין קיפול 1 ל-3, שם נופלים הכי הרבה קיפולים. את העוצמה קובעים בפס שמתחת לנתיב, ומגלגלים בלחיצה על "הכה". כדור שנכנס למרזב לא מפיל כלום.</p><p>במשחק מול יריב משחקים חמישה סיבובים, בכל סיבוב עד שני כדורים. אסטרייק (עשרה בכדור הראשון) מוסיף בונוס של שני הכדורים הבאים, וספייר (עשרה בשני כדורים) מוסיף בונוס של הכדור הבא. בסיבוב האחרון אחרי אסטרייק או ספייר מקבלים כדורים נוספים. מי שצבר יותר נקודות מנצח.</p><p>בשלבים צריך להפיל מספר קיפולים נתון במספר כדורים מוגבל, לפעמים כשיש עמודים או כתמי שמן בנתיב. ככל שפחות כדורים נדרשו, כך יותר כוכבים.</p>' },
+    en: { g_bowl: 'Bowling', d_bowl: 'Aim, curve and knock down all the pins',
+      bowl_help: 'Drag the ball sideways to pick a start point, move a finger on the lane to aim, set the spin and power and press Hit', bowl_hit: 'Hit', bowl_help_two: 'Each player rolls on their turn from their own side of the phone', bowl_wait: 'Waiting for the opponent’s ball…', bowl_think: 'The opponent is aiming…',
+      bowl_strike: 'Strike!', bowl_spare: 'Spare!', bowl_gutter: 'Gutter', bowl_ball: 'Ball', bowl_goal: 'Goal', bowl_frame: 'Frame', bowl_none: 'Nothing fell',
+      ru_bowl: '<p>Each ball is rolled at ten pins and you try to knock down as many as you can. To start, drag the ball left and right along the foul line. Then move a finger on the lane to turn the aim, and two small arrows give extra-fine adjustment. The dotted line shows the ball’s path up to the first pin.</p><p>The first part of the lane is oiled, and after it the ball starts to hook in the direction you set on the spin bar. That is how you reach the pocket between pins 1 and 3, where the most pins fall. Set the power on the bar under the lane and press Hit to roll. A ball that drops into the gutter knocks nothing.</p><p>Against an opponent you play five frames of up to two balls each. A strike (ten pins with the first ball) adds a bonus of the next two balls, and a spare (ten pins with two balls) adds a bonus of the next ball. In the last frame a strike or spare earns extra balls. The higher score wins.</p><p>In levels you must knock down a given number of pins with a limited number of balls, sometimes with posts or oil patches in the lane. The fewer balls you need, the more stars you get.</p>' },
+    ru: { g_bowl: 'Боулинг', d_bowl: 'Цельтесь, закручивайте и сбивайте все кегли',
+      bowl_help: 'Перетащите шар вбок, чтобы выбрать точку старта, двигайте пальцем по дорожке для прицела, задайте вращение и силу и нажмите «Бросок»', bowl_hit: 'Бросок', bowl_help_two: 'Каждый игрок бросает в свой ход со своей стороны телефона', bowl_wait: 'Ждём бросок соперника…', bowl_think: 'Соперник целится…',
+      bowl_strike: 'Страйк!', bowl_spare: 'Спэр!', bowl_gutter: 'Жёлоб', bowl_ball: 'Шар', bowl_goal: 'Цель', bowl_frame: 'Фрейм', bowl_none: 'Ничего не упало',
+      ru_bowl: '<p>Каждым шаром вы бросаете в десять кеглей и стараетесь сбить как можно больше. Чтобы начать, перетащите шар влево или вправо вдоль линии старта. Затем двигайте пальцем по дорожке, чтобы повернуть прицел, а для самой точной настройки есть две маленькие стрелки. Пунктир показывает путь шара до первой кегли.</p><p>Начало дорожки смазано маслом, а дальше шар начинает закручиваться в сторону, которую вы задали на полосе вращения. Так можно попасть в «карман» между кеглями 1 и 3, где падает больше всего кеглей. Силу задают на полосе под дорожкой, а бросок делают кнопкой «Бросок». Шар в жёлобе ничего не сбивает.</p><p>В матче с соперником играют пять фреймов по два шара. Страйк (десять кеглей первым шаром) даёт бонус из двух следующих шаров, а спэр (десять кеглей двумя шарами) даёт бонус следующего шара. В последнем фрейме после страйка или спэра даются дополнительные шары. Побеждает тот, у кого больше очков.</p><p>В уровнях нужно сбить заданное число кеглей ограниченным числом шаров, иногда при столбах или масляных пятнах на дорожке. Чем меньше шаров нужно, тем больше звёзд.</p>' },
+    es: { g_bowl: 'Bolos', d_bowl: 'Apunta, da efecto y derriba todos los bolos',
+      bowl_help: 'Arrastra la bola hacia los lados para elegir el punto de salida, mueve un dedo por la pista para apuntar, fija el efecto y la fuerza y pulsa Lanzar', bowl_hit: 'Lanzar', bowl_help_two: 'Cada jugador lanza en su turno desde su lado del teléfono', bowl_wait: 'Esperando la bola del rival…', bowl_think: 'El rival está apuntando…',
+      bowl_strike: '¡Pleno!', bowl_spare: '¡Semipleno!', bowl_gutter: 'Canaleta', bowl_ball: 'Bola', bowl_goal: 'Meta', bowl_frame: 'Ronda', bowl_none: 'No cayó nada',
+      ru_bowl: '<p>Con cada bola lanzas contra diez bolos e intentas derribar los máximos posibles. Para empezar, arrastra la bola a izquierda y derecha por la línea de salida. Luego mueve un dedo por la pista para girar la puntería, y dos flechas pequeñas permiten un ajuste muy fino. La línea de puntos muestra el camino de la bola hasta el primer bolo.</p><p>La primera parte de la pista está engrasada y después la bola empieza a curvarse hacia el lado que fijaste en la barra de efecto. Así se llega al hueco entre los bolos 1 y 3, donde caen más bolos. Fija la fuerza en la barra bajo la pista y pulsa Lanzar. Una bola que cae en la canaleta no derriba nada.</p><p>Contra un rival se juegan cinco rondas de hasta dos bolas. Un pleno (diez bolos con la primera bola) suma de bonus las dos bolas siguientes, y un semipleno (diez bolos con dos bolas) suma la bola siguiente. En la última ronda, tras un pleno o semipleno hay bolas extra. Gana quien tenga más puntos.</p><p>En los niveles hay que derribar un número dado de bolos con un número limitado de bolas, a veces con postes o manchas de aceite en la pista. Cuantas menos bolas necesites, más estrellas.</p>' },
+    ar: { g_bowl: 'بولينغ', d_bowl: 'صوّب والفّ وأسقط كل الدبابيس',
+      bowl_help: 'اسحب الكرة جانباً لاختيار نقطة البداية، حرّك إصبعك على المسار للتصويب، اضبط الدوران والقوة واضغط اضرب', bowl_hit: 'اضرب', bowl_help_two: 'كل لاعب يرمي في دوره من جهته من الهاتف', bowl_wait: 'بانتظار كرة الخصم…', bowl_think: 'الخصم يصوّب…',
+      bowl_strike: 'ضربة كاملة!', bowl_spare: 'سبير!', bowl_gutter: 'المجرى', bowl_ball: 'كرة', bowl_goal: 'الهدف', bowl_frame: 'جولة', bowl_none: 'لم يسقط شيء',
+      ru_bowl: '<p>بكل كرة ترمي نحو عشرة دبابيس وتحاول إسقاط أكبر عدد ممكن. للبدء اسحب الكرة يميناً ويساراً على خط البداية. ثم حرّك إصبعك على المسار لتدوير التصويب، وهناك سهمان صغيران لضبط دقيق جداً. يُظهر الخط المنقّط مسار الكرة حتى أول دبوس.</p><p>الجزء الأول من المسار مدهون بالزيت، وبعده تبدأ الكرة بالالتفاف في الاتجاه الذي ضبطته على شريط الدوران. هكذا تصل إلى الفجوة بين الدبوسين 1 و3 حيث يسقط أكثر عدد من الدبابيس. اضبط القوة على الشريط تحت المسار واضغط اضرب. الكرة التي تسقط في المجرى لا تُسقط شيئاً.</p><p>أمام خصم تلعبان خمس جولات من كرتين كحد أقصى. الضربة الكاملة (عشرة دبابيس بالكرة الأولى) تضيف مكافأة الكرتين التاليتين، والسبير (عشرة بكرتين) يضيف مكافأة الكرة التالية. في الجولة الأخيرة بعد ضربة كاملة أو سبير تحصل على كرات إضافية. يفوز من جمع نقاطاً أكثر.</p><p>في المراحل عليك إسقاط عدد معين من الدبابيس بعدد محدود من الكرات، أحياناً مع أعمدة أو بقع زيت في المسار. كلما احتجت كرات أقل نلت نجوماً أكثر.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -4155,10 +4361,265 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   };
 })();
 
+/* ===== src/bowl_ui.js ===== */
+'use strict';
+/* באולינג — שלבים, מול המחשב, שניים בטלפון (מסך מפוצל, נתיב לרוחב), אונליין. המנוע: Bowl.
+   הגלגול הוא (y, vx, vy, spin) מעוגל לשלוש ספרות. שני הטלפונים מריצים את אותה פיזיקה בצעדים קבועים ומגיעים לאותם קיפולים.
+   רק מי שהתור שלו שולח גלגול; הודעה מחוץ לתור נחסמת בתוך הפונקציה. */
+(function () {
+  const E = Bowl, LV = E.makeLevels(), M = 0.9, STRIP = 3.6, TEAM = ['#4f8be8', '#e8584f'], GAIN = 0.5, STEP = 0.0017;      // STEP: radians per press of an arrow button
+  const STEPS_PER_FRAME = 40, clamp01 = v => Math.max(0, Math.min(1, v)), MAXSTEPS = 240 * 12, MAXANG = 0.42;
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botLvl = cfg.mode === 'cpu' ? cfg.lv : 0;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0;
+      this.g = this.lv ? E.newLevel(this.lv) : E.newMatch(); this.Rb = E.prng(this.seed * 5 + 1); this.q = {}; this.spd = 1; this.ff = false;
+      this.sa = [0, 1].map(() => ({ y: E.WD / 2, a: 0, p: 0.6, sp: 0 }));
+      this.state = this.net ? 'count' : 'prep'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.acc = 0; this.steps = 0; this.note = null; this.botAim = null; this.resT = 0; this.rep = null; this.fx = [];
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+      if (this.state === 'prep') this.beginTurn();
+    }
+    mine() { return this.mode === 'two' ? [this.g.turn || 0] : this.net ? [this.me] : [0]; }
+    turn() { return this.lv ? 0 : this.g.turn; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views ${two ? 'duo' : 'one'}">${two ? '<div class="pv top"><canvas></canvas></div>' : ''}<div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center"></div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el);
+      this.views = $$('.pv', el).map(box => { const side = two ? (box.classList.contains('top') ? 1 : 0) : (this.net ? this.me : 0); return { box, cv: $('canvas', box), side, rot: two && side === 1, land: two, cs: 10, cw: 20, ch: 12, ctx: null }; });
+      this.views.forEach(v => this.bindInput(v));
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      this.views.forEach(v => {
+        const r = v.box.getBoundingClientRect(), uw = (v.land ? E.LEN : E.WD) + 2 * M, uh = (v.land ? E.WD : E.LEN) + 2 * M + STRIP; v.cs = Math.max(6, Math.min((r.width - 2) / uw, (r.height - 2) / uh)); v.cw = uw * v.cs; v.ch = uh * v.cs;
+        const d = Math.min(window.devicePixelRatio || 1, 2); v.cv.width = Math.round(v.cw * d); v.cv.height = Math.round(v.ch * d); v.cv.style.width = v.cw + 'px'; v.cv.style.height = v.ch + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+      });
+    }
+    // world (x from the foul line to the pit, y across) <-> canvas units. Portrait: the foul line is at the bottom. Landscape (two on one phone): x runs right.
+    toC(v, x, y) { return v.land ? [M + x, M + y] : [M + y, M + E.LEN - x]; }
+    toW(v, u, w) { return v.land ? [u - M, w - M] : [E.LEN - (w - M), u - M]; }
+    /* ---------- input ---------- */
+    local(v, e) { const r = v.cv.getBoundingClientRect(); let x = (e.clientX - r.left) * (v.cw / r.width), y = (e.clientY - r.top) * (v.ch / r.height); if (v.rot) { x = v.cw - x; y = v.ch - y; } return { x: x / v.cs, y: y / v.cs }; }
+    canAct(v) { return this.state === 'prep' && !this.paused && this.mine().includes(v.side) && this.turn() === v.side; }
+    strip(v) {      // controls under the lane, in canvas units: row 1 = two fine-aim arrows + the spin bar, row 2 = the power bar + the hit button
+      const base = (v.land ? E.WD : E.LEN) + 2 * M, uw = (v.land ? E.LEN : E.WD) + 2 * M, h = 1.4, y1 = base + 0.2, y2 = y1 + h + 0.2;
+      return { base, y1, y2, h, l: { x: 0.3, w: 1.6 }, r: { x: 2.0, w: 1.6 }, spin: { x: 3.8, w: uw - 3.8 - 0.3 }, bar: { x: 0.3, w: uw - 0.3 - 3.6 }, hit: { x: uw - 3.3, w: 3.0 } };
+    }
+    powerSpeed(p) { return E.VMIN + (E.VMAX - E.VMIN) * p * p; }
+    delivery(side) { const a = this.sa[side], sp = this.powerSpeed(a.p); return { y: a.y, vx: Math.cos(a.a) * sp, vy: Math.sin(a.a) * sp, spin: a.sp }; }
+    fire(side) { const d = this.delivery(side); this.shoot(side, d.y, d.vx, d.vy, d.spin); }
+    rotate(side, d) { const A = this.sa[side]; A.a = Math.max(-MAXANG, Math.min(MAXANG, A.a + d)); }
+    bindInput(v) {
+      const inRow = (p, st, r, row) => p.x >= r.x && p.x <= r.x + r.w && p.y >= (row === 1 ? st.y1 : st.y2) && p.y <= (row === 1 ? st.y1 : st.y2) + st.h;
+      v.cv.addEventListener('pointerdown', e => {
+        e.preventDefault(); if (this.state === 'roll') this.ff = true; if (!this.canAct(v)) return; try { v.cv.setPointerCapture(e.pointerId); } catch (x) {} const p = this.local(v, e), st = this.strip(v), side = v.side, A = this.sa[side];
+        if (p.y >= st.base) {
+          if (inRow(p, st, st.l, 1)) { this.rotate(side, -STEP); v.rep = { k: -1, t: 0.4 }; SFX.tap(); }
+          else if (inRow(p, st, st.r, 1)) { this.rotate(side, STEP); v.rep = { k: 1, t: 0.4 }; SFX.tap(); }
+          else if (inRow(p, st, st.spin, 1)) { v.sp = true; this.setSpin(v, p); }
+          else if (inRow(p, st, st.bar, 2)) { v.sl = true; A.p = clamp01((p.x - st.bar.x) / st.bar.w); }
+          else if (inRow(p, st, st.hit, 2)) { this.fire(side); }
+          return;
+        }
+        const w = this.toW(v, p.x, p.y);
+        if (Math.hypot(w[0] - E.X0, w[1] - A.y) < 1.1) { v.mv = true; A.y = Math.max(E.YMIN, Math.min(E.YMAX, w[1])); return; }       // grab the ball: choose where on the foul line it starts
+        v.ro = { a0: Math.atan2(w[1] - A.y, w[0] - E.X0), aim0: A.a };
+      });
+      v.cv.addEventListener('pointermove', e => {
+        if (!v.ro && !v.sl && !v.mv && !v.sp) return; const p = this.local(v, e), A = this.sa[v.side], st = this.strip(v);
+        if (v.sl) { A.p = clamp01((p.x - st.bar.x) / st.bar.w); return; }
+        if (v.sp) { this.setSpin(v, p); return; }
+        const w = this.toW(v, p.x, p.y);
+        if (v.mv) { A.y = Math.max(E.YMIN, Math.min(E.YMAX, w[1])); return; }
+        let d = Math.atan2(w[1] - A.y, w[0] - E.X0) - v.ro.a0; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; A.a = Math.max(-MAXANG, Math.min(MAXANG, v.ro.aim0 + d * GAIN));
+      });
+      const end = () => { v.ro = null; v.sl = false; v.mv = false; v.sp = false; v.rep = null; };
+      v.cv.addEventListener('pointerup', end); v.cv.addEventListener('pointercancel', end); v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    setSpin(v, p) { const st = this.strip(v); let s = (p.x - st.spin.x) / st.spin.w * 2 - 1; s = Math.max(-1, Math.min(1, s)); if (Math.abs(s) < 0.08) s = 0; this.sa[v.side].sp = s; }
+    /* ---------- turn flow ---------- */
+    beginTurn() {
+      const g = this.g; this.state = 'prep'; this.botAim = null; this.resT = 0; this.rep = null; const t = this.turn();
+      if (this.mode === 'cpu' && t === 1) { const sh = E.botShot(this.botLvl, g.s, this.Rb); this.botAim = { y: sh.y, vx: sh.vx, vy: sh.vy, spin: sh.spin, t: 0, wait: (1.0 + this.Rb() * 0.8) * this.spd }; }
+      this.msg.textContent = this.mode === 'two' ? T('bowl_help_two') : (this.mode === 'cpu' && t === 1) ? T('bowl_think') : this.net && t !== this.me ? T('bowl_wait') : T('bowl_help');
+      if (this.net) { const q = this.q[this.idx()]; if (q) { delete this.q[this.idx()]; this.onMessage(q); } }
+    }
+    idx() { return this.lv ? this.g.used : this.g.k; }
+    shoot(side, y, vx, vy, spin, fromBot) {
+      if (this.state !== 'prep' || this.turn() !== side) return;
+      if (!fromBot) { if (this.net && side !== this.me) return; if (this.mode !== 'two' && !this.net && side !== 0) return; }   // only your own turn; the computer shoots through fromBot
+      const c = E.clampShot(y, vx, vy, spin); if (this.net) Net.link.send({ type: 'shot', i: this.idx(), y: c.y, vx: c.vx, vy: c.vy, s: c.spin });
+      this.launch(c); SFX.hit();
+    }
+    launch(c) { const g = this.g; this.full = E.standing(g.s) === g.s.n && g.s.n === 10; this.before = E.standing(g.s); E.begin(g.s, c.y, c.vx, c.vy, c.spin); this.state = 'roll'; this.acc = 0; this.steps = 0; this.ff = false; this.shotBy = this.turn(); this.msg.textContent = ''; this.botAim = null; this.nPins = 0; }
+    finishRoll() {
+      const g = this.g, s = g.s, gut = !!s.gut; const d = E.settle(s); let txt = '', col = '#ffd877';
+      if (this.lv) { g.down += d; g.used++; if (d) { txt = '+' + d; col = '#6dffa0'; } else txt = gut ? T('bowl_gutter') : T('bowl_none'); }
+      else {
+        const who = g.turn; E.matchAfter(g, this.before === 10, d);
+        const strike = this.before === 10 && d === 10, spare = !strike && d > 0 && d === this.before && this.before < 10;
+        if (strike) { txt = T('bowl_strike'); col = '#6dffa0'; } else if (spare) { txt = T('bowl_spare'); col = '#6dffa0'; } else if (d) { txt = '+' + d; col = '#6dffa0'; } else txt = gut ? T('bowl_gutter') : T('bowl_none');
+        this.rep = { who, strike, spare };
+      }
+      this.note = { txt, t: 0, c: col }; if (d >= 10 || (this.rep && (this.rep.strike || this.rep.spare))) { SFX.win(); vib(25); } else if (d) SFX.tap(); else SFX.lose();
+      this.state = 'res'; this.resT = 0;
+    }
+    advance() {
+      const g = this.g; let end = null;
+      if (this.lv) { const st = E.levelState(g); if (st.done) end = st; } else if (g.done) end = { res: E.matchResult(g) };
+      if (end) { this.state = 'end'; setTimeout(() => this.finish(end), 400); return; }
+      if (this.net) Net.link.send({ type: 'sum', k: this.idx(), h: this.hash() });
+      this.beginTurn();
+    }
+    hash() { const g = this.g, s = g.s; let h = 0; for (let i = 0; i < s.n; i++) h = (h * 31 + Math.round(s.x[i] * 1e6) + Math.round(s.y[i] * 1e6) * 7 + s.on[i]) % 1e12; const r = this.lv ? [g.down, g.used] : [g.rolls[0].join(','), g.rolls[1].join(','), g.turn]; for (const c of JSON.stringify(r)) h = (h * 31 + c.charCodeAt(0)) % 1e12; return h; }
+    onMessage(m) {
+      if (m.type === 'shot') {
+        const opp = 1 - this.me;
+        if (m.i === this.idx() && this.state === 'prep' && this.turn() === opp) { const c = E.clampShot(m.y, m.vx, m.vy, m.s); this.launch(c); }
+        else if (m.i > this.idx() && this.state !== 'end' && this.state !== 'fin') this.q[m.i] = m;
+      } else if (m.type === 'sum') { if (m.k === this.idx() && this.state !== 'roll' && this.state !== 'res' && m.h !== this.hash()) { this.desync = true; } }
+      else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('bowl'); let html = '', btns = ''; const g = this.g;
+      if (m === 'solo') {
+        const win = !!end.win, n = this.lv.n;
+        if (win) { if (end.stars > (st.lv[n] || 0)) st.lv[n] = end.stars; st.games++; st.wins++; saveP(); Meta.after('bowl', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(end.stars)}${'☆'.repeat(3 - end.stars)}</div><p>🎳 ${g.down}/${this.lv.goal} · ${T('bowl_ball')} ${g.used}/${this.lv.balls}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('bowl', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>🎳 ${g.down}/${this.lv.goal}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res, sc = `🎳 ${E.total(g.rolls[0])} : ${E.total(g.rolls[1])}`; let title, win = false;
+        if (r === 'draw') title = T('draw'); else if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('bowl', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('bowl', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>${sc}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; this.paused = true; const online = this.net;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      if (!this.paused) {
+        if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.beginTurn(); SFX.go(); } }
+        else if (this.state === 'prep') {
+          if (this.botAim) { this.botAim.t += dt; if (this.botAim.t >= this.botAim.wait) { const b = this.botAim; this.botAim = null; this.shoot(1, b.y, b.vx, b.vy, b.spin, true); } }
+        } else if (this.state === 'roll') {
+          this.acc += dt * (this.ff ? 3 : 1) * (this.spd < 1 ? 1 / this.spd : 1); let n = Math.min(STEPS_PER_FRAME * (this.ff || this.spd < 1 ? 3 : 1), Math.floor(this.acc / E.DT)); this.acc -= n * E.DT; const s = this.g.s;
+          while (n-- > 0) { const mv = E.step(s); this.steps++; if (!mv || this.steps > MAXSTEPS) { this.finishRoll(); break; } }
+        } else if (this.state === 'res') { this.resT += dt; if (this.resT > (this.lv ? 1.2 : 1.5) * this.spd) this.advance(); }
+        this.views.forEach(v => { if (v.rep && this.canAct(v)) { v.rep.t -= dt; if (v.rep.t <= 0) { v.rep.t = 0.05; this.rotate(v.side, v.rep.k * STEP); } } }); if (this.note) { this.note.t += dt; if (this.note.t > 1.6) this.note = null; }
+      }
+      this.t += dt; this.draw(); this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    /* ---------- drawing ---------- */
+    draw() { let re = false; this.views.forEach(v => { const r = v.box.getBoundingClientRect(); if (!v.lb || Math.abs(v.lb[0] - r.width) > 1 || Math.abs(v.lb[1] - r.height) > 1) { v.lb = [r.width, r.height]; re = true; } }); if (re) this.layout();      // the box can change after the first layout (hint, voice bar)
+      this.views.forEach(v => { if (v.ctx) this.drawView(v); }); this.stat(); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return; const g = this.g;
+      if (this.lv) st.innerHTML = `<span>${this.lv.n}<small>${T('s_level')}</small></span><span>${g.down}/${this.lv.goal}<small>${T('bowl_goal')}</small></span><span>${Math.min(g.used + 1, this.lv.balls)}/${this.lv.balls}<small>${T('bowl_ball')}</small></span>`;
+      else { const t = g.turn, w = E.where(g.rolls[t]); st.innerHTML = `<span style="color:${TEAM[0]}">${E.total(g.rolls[0])}<small>${esc(this.nameOf(0))}${t === 0 && !g.done ? ' ◀' : ''}</small></span><span>${Math.min(w.f + 1, E.FRAMES)}/${E.FRAMES}<small>${T('bowl_frame')} · ${T('bowl_ball')} ${w.b + 1}</small></span><span style="color:${TEAM[1]}">${E.total(g.rolls[1])}<small>${esc(this.nameOf(1))}${t === 1 && !g.done ? ' ◀' : ''}</small></span>`; }
+    }
+    ballAt(c, v, x, y, side, R0) {
+      const [u, w] = this.toC(v, x, y), cs = v.cs, R = (R0 || E.BR) * cs, px = u * cs, py = w * cs;
+      c.save(); c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(px + R * 0.2, py + R * 0.3, R * 1.0, R * 0.9, 0, 0, 7); c.fill();
+      const gr = c.createRadialGradient(px - R * 0.35, py - R * 0.4, R * 0.1, px, py, R * 1.05); gr.addColorStop(0, '#fff'); gr.addColorStop(0.25, TEAM[side]); gr.addColorStop(1, '#10151f'); c.fillStyle = gr; c.beginPath(); c.arc(px, py, R, 0, 7); c.fill();
+      c.fillStyle = 'rgba(0,0,0,.55)'; [[-0.25, -0.25], [0.15, -0.35], [0.0, 0.0]].forEach(h => { c.beginPath(); c.arc(px + h[0] * R, py + h[1] * R + R * 0.1, R * 0.13, 0, 7); c.fill(); }); c.restore();
+    }
+    rectPx(v, x0, y0, x1, y1) { const p = this.toC(v, x0, y0), q = this.toC(v, x1, y1), cs = v.cs; return [Math.min(p[0], q[0]) * cs, Math.min(p[1], q[1]) * cs, Math.abs(p[0] - q[0]) * cs, Math.abs(p[1] - q[1]) * cs]; }
+    drawView(v) {
+      const c = v.ctx, cs = v.cs, g = this.g, s = g.s, bgA = Art.get('bg-bowl'), P = (x, y) => { const q = this.toC(v, x, y); return [q[0] * cs, q[1] * cs]; };
+      c.clearRect(0, 0, v.cw, v.ch); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, v.cw, v.ch, 14); c.clip();
+      if (bgA) { c.drawImage(bgA, 0, 0, v.cw, v.ch); } else { c.fillStyle = '#171a2b'; c.fillRect(0, 0, v.cw, v.ch); }
+      const a = P(0, 0), b = P(E.LEN, E.WD), x0 = Math.min(a[0], b[0]), y0 = Math.min(a[1], b[1]), w = Math.abs(a[0] - b[0]), hh = Math.abs(a[1] - b[1]);
+      // lane: frame, gutters, wood
+      c.fillStyle = '#2b2f45'; c.beginPath(); c.roundRect(x0 - M * cs * 0.55, y0 - M * cs * 0.55, w + M * cs * 1.1, hh + M * cs * 1.1, cs * 0.5); c.fill();
+      const lane = Art.get('bowl-lane'); const wood = c.createLinearGradient(0, y0, 0, y0 + hh); wood.addColorStop(0, '#e2b36c'); wood.addColorStop(1, '#c8914a');
+      if (lane) { c.fillStyle = c.createPattern(lane, 'repeat'); c.fillRect(x0, y0, w, hh); } else { c.fillStyle = wood; c.fillRect(x0, y0, w, hh); c.strokeStyle = 'rgba(120,70,20,.25)'; c.lineWidth = cs * 0.04; for (let k = 1; k < 10; k++) { const p = P(0, E.WD * k / 10), q = P(E.LEN, E.WD * k / 10); c.beginPath(); c.moveTo(p[0], p[1]); c.lineTo(q[0], q[1]); c.stroke(); } }
+      { const g1 = this.rectPx(v, 0, 0, E.LEN, E.GUT), g2 = this.rectPx(v, 0, E.WD - E.GUT, E.LEN, E.WD); c.fillStyle = '#191b2a'; c.fillRect(g1[0], g1[1], g1[2], g1[3]); c.fillRect(g2[0], g2[1], g2[2], g2[3]); }
+      s.oil.forEach(o => { const r = this.rectPx(v, o[0], E.GUT, o[1], E.WD - E.GUT); const gr = c.createLinearGradient(r[0], r[1], r[0] + r[2], r[1] + r[3]); gr.addColorStop(0, 'rgba(255,255,255,.16)'); gr.addColorStop(0.5, 'rgba(200,230,255,.28)'); gr.addColorStop(1, 'rgba(255,255,255,.12)'); c.fillStyle = gr; c.fillRect(r[0], r[1], r[2], r[3]); });
+      { const fl = this.rectPx(v, E.X0 - 0.45, E.GUT, E.X0 - 0.38, E.WD - E.GUT); c.fillStyle = 'rgba(220,40,40,.8)'; c.fillRect(fl[0], fl[1], fl[2], fl[3]); }
+      c.fillStyle = 'rgba(90,50,10,.55)'; for (let k = 0; k < 7; k++) { const q = P(4.4 + Math.abs(k - 3) * 0.35, E.GUT + (E.WD - 2 * E.GUT) * (k + 0.5) / 7); c.beginPath(); c.arc(q[0], q[1], cs * 0.09, 0, 7); c.fill(); }
+      { const pit = this.rectPx(v, E.LEN - 0.25, 0, E.LEN + 0.6, E.WD); c.fillStyle = '#0c0d14'; c.fillRect(pit[0], pit[1], pit[2], pit[3]); }
+      // posts
+      s.posts.forEach(o => { const q = P(o[0], o[1]), R = o[2] * cs; const gr = c.createRadialGradient(q[0] - R * 0.3, q[1] - R * 0.35, R * 0.1, q[0], q[1], R); gr.addColorStop(0, '#e9edf3'); gr.addColorStop(1, '#6b7180'); c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.arc(q[0] + R * 0.12, q[1] + R * 0.2, R, 0, 7); c.fill(); c.fillStyle = gr; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill(); c.strokeStyle = '#2a2e3a'; c.lineWidth = cs * 0.07; c.stroke(); });
+      // pins
+      for (let i = 0; i < s.n; i++) if (s.on[i]) { const q = P(s.x[i], s.y[i]), R = E.PR * cs * 1.35; c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.arc(q[0] + R * 0.2, q[1] + R * 0.3, R, 0, 7); c.fill(); const gr = c.createRadialGradient(q[0] - R * 0.3, q[1] - R * 0.35, R * 0.1, q[0], q[1], R); gr.addColorStop(0, '#fff'); gr.addColorStop(1, '#cfd3dc'); c.fillStyle = gr; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill(); c.strokeStyle = '#d83a34'; c.lineWidth = Math.max(1.5, R * 0.3); c.beginPath(); c.arc(q[0], q[1], R * 0.55, 0, 7); c.stroke(); c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = cs * 0.04; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.stroke(); }
+      // the ball and the aim
+      const t = this.turn(), can = this.canAct(v); let sh = null;
+      if (can) { sh = this.delivery(v.side); }
+      else if (this.botAim && v.side === 0) sh = this.botAim;
+      const bx = this.state === 'roll' ? s.bx : E.X0, by = this.state === 'roll' ? s.by : (sh ? sh.y : this.sa[t].y);
+      if (sh && this.state === 'prep') {
+        c.save(); c.beginPath(); c.rect(0, 0, v.cw, this.strip(v).base * cs); c.clip();
+        const pts = E.preview(s, sh.y, sh.vx, sh.vy, sh.spin); c.fillStyle = 'rgba(255,255,255,.92)'; pts.forEach((pt, i) => { if (i === 0) return; const q = P(pt[0], pt[1]); c.beginPath(); c.arc(q[0], q[1], cs * 0.09, 0, 7); c.fill(); });
+        c.restore();
+      }
+      if (this.state === 'prep' || this.state === 'roll' || this.state === 'res') { if (!(this.state === 'roll' && s.bout) && !(this.state === 'res')) this.ballAt(c, v, bx, by, this.state === 'roll' ? this.shotBy : t); }
+      // controls strip under the lane
+      { const st = this.strip(v), A = this.sa[v.side], on = can && this.mine().includes(v.side), rr = (r, row, fill, txt) => { const y = row === 1 ? st.y1 : st.y2; c.fillStyle = fill; c.beginPath(); c.roundRect(r.x * cs, y * cs, r.w * cs, st.h * cs, cs * 0.35); c.fill(); c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = cs * 0.05; c.stroke(); if (txt) { c.fillStyle = '#fff'; c.font = `900 ${cs * 0.8}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(txt, (r.x + r.w / 2) * cs, (y + st.h / 2) * cs + cs * 0.04); } };
+        c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(0, st.base * cs, v.cw, v.ch - st.base * cs);
+        if (on) {
+          rr(st.l, 1, 'rgba(255,255,255,.18)', '◀'); rr(st.r, 1, 'rgba(255,255,255,.18)', '▶'); rr(st.spin, 1, 'rgba(0,0,0,.45)');
+          { const cx = (st.spin.x + st.spin.w / 2) * cs, kx = (st.spin.x + st.spin.w * (A.sp + 1) / 2) * cs, ky = (st.y1 + st.h / 2) * cs; c.fillStyle = 'rgba(255,255,255,.25)'; c.fillRect(cx - cs * 0.04, (st.y1 + 0.2) * cs, cs * 0.08, (st.h - 0.4) * cs); c.fillStyle = '#7fd0ff'; c.beginPath(); c.arc(kx, ky, st.h * cs * 0.38, 0, 7); c.fill(); c.fillStyle = 'rgba(255,255,255,.75)'; c.font = `900 ${cs * 0.75}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('↶', (st.spin.x + 0.8) * cs, ky); c.fillText('↷', (st.spin.x + st.spin.w - 0.8) * cs, ky); }
+          rr(st.bar, 2, 'rgba(0,0,0,.45)'); c.fillStyle = A.p > 0.8 ? '#ff7a5c' : '#ffd877'; c.beginPath(); c.roundRect(st.bar.x * cs, st.y2 * cs, Math.max(st.h * cs * 0.5, st.bar.w * A.p * cs), st.h * cs, cs * 0.35); c.fill();
+          rr(st.hit, 2, '#e8a735', ''); c.fillStyle = '#1b1b1f'; c.font = `900 ${cs * 0.7}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(T('bowl_hit'), (st.hit.x + st.hit.w / 2) * cs, (st.y2 + st.h / 2) * cs + cs * 0.04);
+        } }
+      if (this.mode === 'two' && this.state !== 'count' && this.turn() !== v.side) { c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(0, 0, v.cw, v.ch); }
+      if (this.note) { const k = Math.min(1, this.note.t * 4); c.save(); c.globalAlpha = Math.min(1, (1.6 - this.note.t) * 2) * k; c.font = `900 ${cs * 1.4}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.22; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.7)'; c.fillStyle = this.note.c; const q = P(E.LEN * 0.5, E.WD / 2); c.strokeText(this.note.txt, q[0], q[1]); c.fillText(this.note.txt, q[0], q[1]); c.restore(); }
+      c.restore();
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'bowl'; setPlayBg('bowl'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.bowl = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#2b2f45"/><rect x="18" y="4" width="54" height="62" rx="4" fill="#d9a35a"/><rect x="18" y="4" width="6" height="62" fill="#191b2a"/><rect x="66" y="4" width="6" height="62" fill="#191b2a"/><g fill="#fff" stroke="#d83a34" stroke-width="1.6"><circle cx="45" cy="14" r="3.6"/><circle cx="39" cy="9" r="3.6"/><circle cx="51" cy="9" r="3.6"/><circle cx="33" cy="14" r="3.6"/><circle cx="57" cy="14" r="3.6"/></g><circle cx="42" cy="52" r="8" fill="#4f8be8"/><circle cx="39" cy="49" r="1.3" fill="#10151f"/><circle cx="44" cy="48" r="1.3" fill="#10151f"/><circle cx="42" cy="52" r="1.3" fill="#10151f"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'bowl', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳' };
+const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf', 'bowl'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳', bowl: '🎳' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
