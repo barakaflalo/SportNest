@@ -166,6 +166,7 @@ input.txt:focus{border-color:var(--acc)}
 :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] 
 #play[data-bg=pen]{background:linear-gradient(180deg,#27406a,#2f5d86 40%,#3d8a55)}
 #play[data-bg=hoop]{background:linear-gradient(180deg,#26335a,#3b4f86 45%,#a96d33)}
+#play[data-bg=air]{background:linear-gradient(180deg,#1b2236,#12192a 60%,#0d121e)}
 #play[data-bg=arch]{background:linear-gradient(180deg,#1d3a4f,#1f3a31 60%,#16281f)}
 #play[data-bg=dart]{background:linear-gradient(180deg,#2a1f33,#3a2a46 50%,#25303f)}
 #play[data-bg=box]{background:linear-gradient(180deg,#1b1f33,#3a3350 50%,#34406a)}
@@ -190,7 +191,7 @@ input.txt:focus{border-color:var(--acc)}
 <div id="album" class="sc"></div>
 <div id="about" class="sc"></div>
 <script>
-const ART_FILES = ["arch-arrow","arch-target","bg-arch","bg-bowl","bg-box","bg-dart","bg-hoop","bg-pen","bowl-lane","box-head1","box-head2","dart-dart","golf-grass","golf-sand","golf-wall","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-arch","tile-bowl","tile-box","tile-dart","tile-golf","tile-hoop","tile-pen","tile-snk"];
+const ART_FILES = ["air-mallet0","air-mallet1","air-puck","air-table","arch-arrow","arch-target","bg-air","bg-arch","bg-bowl","bg-box","bg-dart","bg-hoop","bg-pen","bowl-lane","box-head1","box-head2","dart-dart","golf-grass","golf-sand","golf-wall","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-air","tile-arch","tile-bowl","tile-box","tile-dart","tile-golf","tile-hoop","tile-pen","tile-snk"];
 /* ===== src/nestlink.js ===== */
 /* =====================================================================
    NestLink 1.1 — AppNest online multiplayer module (WebRTC via PeerJS)
@@ -1437,6 +1438,117 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Arch = API;
 })(typeof self !== 'undefined' ? self : this);
 
+/* ===== engines/air.js ===== */
+/* SportNest — air hockey engine (pure, deterministic).
+   Table: x across (0..W), y along (0..H). Side 0 defends the bottom goal (y = 0) and plays the lower half, side 1 defends the top goal.
+   Fixed step 1/240 s, only + - * / and sqrt inside the simulation, so the same inputs always give the same game. A mallet is not pushed
+   by the puck: it is driven toward a target point (the finger) at a limited speed, and the puck bounces off it taking part of that velocity.
+   Real-time online play does not need lockstep: the host runs this engine, the guest sends its target point and receives snapshots.
+   Bots only look at the puck (with a reaction delay) and at their own mallet; there is no hidden information in this game. */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const W = 6, H = 10, GW = 2.4, PR = 0.32, MR = 0.5, POST = 0.14, DT = 1 / 240, VP = 22, E_M = 0.92, E_O = 0.9, SERVE = 1.4;
+  const HOME = [[W / 2, 1.5], [W / 2, H - 1.5]];
+  const dist2 = (a, b, c, d) => (a - c) * (a - c) + (b - d) * (b - d);
+  /* ---------- the table ---------- */
+  function make(o) {
+    o = o || {}; const gw = o.gw || [GW, GW];
+    const s = { W, H, puck: { x: W / 2, y: H / 2, vx: 0, vy: 0 }, m: [{ x: HOME[0][0], y: HOME[0][1], vx: 0, vy: 0, tx: HOME[0][0], ty: HOME[0][1] }, { x: HOME[1][0], y: HOME[1][1], vx: 0, vy: 0, tx: HOME[1][0], ty: HOME[1][1] }],
+      score: [0, 0], t: 0, hold: SERVE, obst: (o.obst || []).map(a => a.slice()), fr: o.fr == null ? 0.12 : o.fr, rest: o.rest == null ? 0.94 : o.rest, gw: gw.slice(), mv: o.mv ? o.mv.slice() : [26, 26],
+      goals: o.goals || 5, tmax: o.tmax || 150, sudden: false, over: false, winner: null, still: 0, ev: [], last: -1, touch: 0 };
+    s.posts = []; for (let i = 0; i < 2; i++) { const y = i ? H : 0; s.posts.push([W / 2 - gw[i] / 2, y, POST], [W / 2 + gw[i] / 2, y, POST]); }
+    serve(s, o.first == null ? 0 : o.first); s.hold = SERVE; return s;
+  }
+  function serve(s, c) {       // the side that conceded (c) gets the puck on its half
+    s.puck.x = W / 2; s.puck.y = c === 0 ? H * 0.28 : H * 0.72; s.puck.vx = 0; s.puck.vy = 0; s.hold = SERVE; s.still = 0;
+    for (let i = 0; i < 2; i++) { const m = s.m[i]; m.x = HOME[i][0]; m.y = HOME[i][1]; m.vx = 0; m.vy = 0; m.tx = m.x; m.ty = m.y; }
+  }
+  const zone = (side, x, y) => ({ x: clamp(x, MR, W - MR), y: side === 0 ? clamp(y, MR, H / 2 - 0.1) : clamp(y, H / 2 + 0.1, H - MR) });
+  function setTarget(s, side, x, y) { if (x !== x || y !== y) return; const z = zone(side, +x, +y), m = s.m[side]; m.tx = z.x; m.ty = z.y; }
+  function circle(p, cx, cy, r, e, vx, vy) {        // puck against a circle (mallet with velocity vx,vy, or fixed); returns 1 on contact
+    const dx = p.x - cx, dy = p.y - cy, rr = PR + r, d2 = dx * dx + dy * dy; if (d2 >= rr * rr) return 0;
+    const d = d2 > 1e-12 ? Math.sqrt(d2) : 1e-6, nx = d2 > 1e-12 ? dx / d : 0, ny = d2 > 1e-12 ? dy / d : 1;
+    p.x = cx + nx * rr; p.y = cy + ny * rr; const vn = (p.vx - vx) * nx + (p.vy - vy) * ny; if (vn < 0) { p.vx -= (1 + e) * vn * nx; p.vy -= (1 + e) * vn * ny; } return 1;
+  }
+  function step(s) {
+    if (s.over) return; const p = s.puck;
+    for (let i = 0; i < 2; i++) {           // mallets chase their targets at a limited speed
+      const m = s.m[i], t = zone(i, m.tx, m.ty), dx = t.x - m.x, dy = t.y - m.y, d2 = dx * dx + dy * dy, lim = s.mv[i] * DT;
+      if (d2 <= lim * lim) { m.vx = dx / DT; m.vy = dy / DT; m.x = t.x; m.y = t.y; } else { const d = Math.sqrt(d2); m.vx = dx / d * s.mv[i]; m.vy = dy / d * s.mv[i]; m.x += m.vx * DT; m.y += m.vy * DT; }
+    }
+    if (s.hold > 0) { s.hold -= DT; return; }
+    s.t += DT;
+    if (s.tmax && s.t >= s.tmax && !s.sudden) { if (s.score[0] !== s.score[1]) { s.over = true; s.winner = s.score[0] > s.score[1] ? 0 : 1; s.ev.push({ type: 'end' }); return; } s.sudden = true; s.ev.push({ type: 'sudden' }); }
+    const k = 1 - s.fr * DT; p.vx *= k; p.vy *= k; p.x += p.vx * DT; p.y += p.vy * DT;
+    for (let i = 0; i < 2; i++) { const m = s.m[i]; if (circle(p, m.x, m.y, MR, E_M, m.vx, m.vy)) { s.last = i; s.ev.push({ type: 'hit', v: Math.sqrt(p.vx * p.vx + p.vy * p.vy) }); } }
+    for (let i = 0; i < s.obst.length; i++) { const o = s.obst[i]; if (circle(p, o[0], o[1], o[2], E_O, 0, 0)) s.ev.push({ type: 'bump' }); }
+    for (let i = 0; i < s.posts.length; i++) { const o = s.posts[i]; if (circle(p, o[0], o[1], o[2], s.rest, 0, 0)) s.ev.push({ type: 'post' }); }
+    if (p.x < PR) { p.x = PR; if (p.vx < 0) { p.vx = -p.vx * s.rest; s.ev.push({ type: 'wall' }); } } else if (p.x > W - PR) { p.x = W - PR; if (p.vx > 0) { p.vx = -p.vx * s.rest; s.ev.push({ type: 'wall' }); } }
+    const in0 = Math.abs(p.x - W / 2) < s.gw[0] / 2, in1 = Math.abs(p.x - W / 2) < s.gw[1] / 2;
+    if (p.y < PR && !in0) { p.y = PR; if (p.vy < 0) { p.vy = -p.vy * s.rest; s.ev.push({ type: 'wall' }); } }
+    if (p.y > H - PR && !in1) { p.y = H - PR; if (p.vy > 0) { p.vy = -p.vy * s.rest; s.ev.push({ type: 'wall' }); } }
+    if (p.y < -PR) goal(s, 1); else if (p.y > H + PR) goal(s, 0);
+    if (s.over) return;
+    const sp2 = p.vx * p.vx + p.vy * p.vy; if (sp2 > VP * VP) { const f = VP / Math.sqrt(sp2); p.vx *= f; p.vy *= f; }
+    if (sp2 < 0.16) { s.still += DT; if (s.still > 5) { const inHalf = p.y < H / 2 ? 0 : 1; p.x = W / 2; p.y = H / 2; p.vx = 0; p.vy = inHalf === 0 ? 4 : -4; s.still = 0; } } else s.still = 0;
+  }
+  function goal(s, scorer) {
+    s.score[scorer]++; s.ev.push({ type: 'goal', side: scorer });
+    if (s.score[scorer] >= s.goals || s.sudden) { s.over = true; s.winner = scorer; s.ev.push({ type: 'end' }); return; }
+    serve(s, 1 - scorer);
+  }
+  /* ---------- bots ---------- */
+  // profile: spd (mallet speed), react (seconds of delay), err (target jitter), pred (predicts wall bounces), pe (error of that prediction), aggr (0..1, how far it comes out), aim (0..1, how well it aims at the corners)
+  function prof(n) { const k = clamp((n - 1) / 23, 0, 1); return { spd: 12 + 5 * k, react: 0.40 - 0.33 * k, err: 0.5 - 0.42 * k, pred: n >= 3 ? 1 : 0, pe: 0.12 + 0.88 * (1 - k) * (1 - k), aggr: 0.3 + 0.6 * k, aim: k }; }
+  function newBot(p, seed) { return { p, R: prng(seed || 1), h: [], jit: [0, 0], pn: 0, jt: 0, phase: 'def', st: 0, off: 0 }; }
+  function reflectX(x0, vx, vy, y0, y1) {          // x position when the puck, moving with (vx,vy), reaches y1 (bounces off the side walls); null if it never does
+    if (Math.abs(vy) < 1e-6) return null; const t = (y1 - y0) / vy; if (t < 0) return null; let x = x0 + vx * t; const lo = PR, hi = W - PR, span = hi - lo; x = (x - lo) % (2 * span); if (x < 0) x += 2 * span; return lo + (x > span ? 2 * span - x : x);
+  }
+  function botStep(b, s, side) {
+    const p = b.p, R = b.R, me = s.m[side], fl = side === 1, Y = y => fl ? H - y : y, X = x => x;
+    b.h.push([s.puck.x, Y(s.puck.y), s.puck.vx, fl ? -s.puck.vy : s.puck.vy]); const lag = Math.round(p.react / DT); if (b.h.length > lag + 2) b.h.shift();
+    const o = b.h[Math.max(0, b.h.length - 1 - lag)], px = o[0], py = o[1], pvx = o[2], pvy = o[3];
+    b.jt -= DT; if (b.jt <= 0) { b.jt = 0.25; b.jit = [gauss(R) * p.err * 0.5, gauss(R) * p.err * 0.5]; b.pn = gauss(R); }
+    const mx = me.x, my = Y(me.y), ownGW = s.gw[side], oppGW = s.gw[1 - side]; let tx, ty;
+    const defY = 1.0 + 0.9 * p.aggr, inOwn = py < H / 2 - 0.15, sp = Math.hypot(pvx, pvy);
+    const attack = inOwn && (pvy > -3 || sp < 5 || py < H / 2 - 1.2);
+    if (attack) {
+      if (b.phase !== 'strike' && b.phase !== 'appr') { b.phase = 'appr'; b.off = (R() < 0.5 ? -1 : 1) * p.aim * (oppGW / 2 - 0.55) * (0.5 + 0.5 * R()); b.off += gauss(R) * (1 - p.aim) * 1.2; }
+      const gx = W / 2 + b.off, gy = H + 0.5; let dx = gx - px, dy = gy - py, dl = Math.sqrt(dx * dx + dy * dy); dx /= dl; dy /= dl;
+      const bx = px - dx * (MR + PR + 0.12), by = py - dy * (MR + PR + 0.12);
+      const behind = (mx - px) * dx + (my - py) * dy < -0.25;
+      if (b.phase === 'strike') { tx = px + dx * 1.2; ty = py + dy * 1.2; b.st += DT; if (b.st > 0.35 || py > H / 2 || (sp > 6 && pvy > 1)) { b.phase = 'def'; b.st = 0; } }
+      else {
+        // go around the puck if the straight path to the point behind it would touch it
+        const vx = bx - mx, vy = by - my, vl2 = vx * vx + vy * vy, tt = vl2 > 1e-9 ? clamp(((px - mx) * vx + (py - my) * vy) / vl2, 0, 1) : 0, cx = mx + vx * tt, cy = my + vy * tt;
+        if (!behind && dist2(cx, cy, px, py) < (MR + PR + 0.15) * (MR + PR + 0.15)) { const sg = mx < px ? -1 : 1; tx = px + sg * (MR + PR + 0.5); ty = py - 0.2; }
+        else { tx = bx; ty = by; if (dist2(mx, my, bx, by) < 0.3 * 0.3 && behind) { b.phase = 'strike'; b.st = 0; } }
+      }
+    } else {
+      b.phase = 'def';
+      let ex = px; const q = p.pred ? reflectX(px, pvx, pvy, py, defY) : null; if (pvy < -0.5 && q != null) ex = q + (p.pe ? b.pn * p.pe : 0); else if (py > H / 2) ex = W / 2 + (px - W / 2) * 0.55;
+      const lim = ownGW / 2 + 0.2; tx = clamp(ex, W / 2 - lim, W / 2 + lim); ty = py > H / 2 ? defY + 0.5 : defY;
+    }
+    tx += b.jit[0]; ty += b.jit[1]; ty = Math.max(MR, ty);
+    setTarget(s, side, X(tx), Y(ty));
+  }
+  /* ---------- solo levels: a first-to-N match against a stronger bot each time ---------- */
+  function levelOpt(n) {
+    const w = ((n - 1) / 6) | 0, o = { goals: n <= 12 ? 3 : 5, tmax: 120, mv: [26, prof(n).spd] };
+    if (w === 1 || w === 3) o.obst = n % 2 ? [[W / 2, H / 2, 0.55]] : [[W / 2 - 1.5, H / 2, 0.45], [W / 2 + 1.5, H / 2, 0.45]];
+    if (w === 2 || w === 3) { o.fr = 0.03; o.rest = 0.98; }
+    if (w === 3) o.gw = [2.2, 2.4];
+    return o;
+  }
+  function makeLevels() { const out = []; for (let n = 1; n <= 24; n++) out.push({ n, opt: levelOpt(n), prof: prof(n), seed: 8100 + n * 17 }); return out; }
+  function stars(lv, sc) { const g = lv.opt.goals; if (sc[0] < g && !(sc[0] > sc[1])) return 0; return sc[1] === 0 ? 3 : sc[1] <= Math.floor(g / 2) ? 2 : 1; }
+  const API = { W, H, GW, PR, MR, POST, DT, VP, SERVE, HOME, prng, gauss, clamp, make, serve, zone, setTarget, step, goal, prof, newBot, botStep, reflectX, levelOpt, makeLevels, stars };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Air = API;
+})(typeof self !== 'undefined' ? self : this);
+
 /* ===== src/i18n.js ===== */
 /* SportNest — shell strings: he, en, ru, es, ar. Missing key falls back to English. Game strings live in i18n_<game>.js */
 const LANG = {
@@ -2642,10 +2754,33 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_air.js ===== */
+/* SportNest — Air hockey strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_air: 'הוקי אוויר', d_air: 'מגינים על השער ומבקיעים בזמן אמת',
+      air_help: 'גררו את האצבע כדי להזיז את המקל. הגנו על השער שלכם והבקיעו', air_two_help: 'כל שחקן מזיז את המקל שלו בחצי של השולחן שלו, בו-זמנית', air_goal: 'גול!', air_to: 'עד {n}', air_time: 'זמן', air_sd: 'הארכה', air_sudden: 'הארכה: הגול הבא מכריע',
+      ru_air: '<p>משחקים בזמן אמת על שולחן הוקי אוויר. מזיזים את האצבע על המסך והמקל שלכם עוקב אחריה, מעט לפני האצבע כדי שיהיה אפשר לראות אותו. המקל נשאר בחצי השולחן שלכם. המטרה היא להכניס את הדיסקית לשער של היריב ולהגן על השער שלכם.</p><p>הדיסקית קופצת מהקירות, וככל שהמקל נע מהר יותר בזמן המכה, כך הדיסקית יוצאת מהר יותר. אחרי כל גול הדיסקית חוזרת לצד של מי שספג. אם הדיסקית נעצרת יותר מדי זמן, היא מוחזרת למרכז.</p><p>במשחק מול יריב מנצח הראשון שמגיע לחמישה גולים, או מי שמוביל כשהזמן נגמר. בשוויון הגול הבא מכריע. בשני שחקנים על טלפון אחד כל שחקן יושב בצד שלו ומזיז את המקל שלו עם אצבע, בו-זמנית. בשלבים היריב חזק יותר בכל פעם, ויש שולחנות עם פגושים, קרח ושער צר. פחות גולים שספגתם, יותר כוכבים.</p>' },
+    en: { g_air: 'Air Hockey', d_air: 'Defend your goal and score in real time',
+      air_help: 'Drag your finger to move the mallet. Defend your goal and score', air_two_help: 'Each player moves their own mallet in their half of the table, at the same time', air_goal: 'Goal!', air_to: 'First to {n}', air_time: 'Time', air_sd: 'Overtime', air_sudden: 'Overtime: next goal wins',
+      ru_air: '<p>You play in real time on an air hockey table. Move your finger on the screen and your mallet follows it, a little ahead of the finger so that you can see it. The mallet stays in your half of the table. The aim is to put the puck in the opponent’s goal and to protect your own.</p><p>The puck bounces off the walls, and the faster the mallet moves when it hits, the faster the puck flies. After each goal the puck goes to the side that conceded. If the puck stops for too long it is put back in the middle.</p><p>Against an opponent the first to five goals wins, or whoever leads when time runs out. A tie goes to overtime where the next goal wins. In two-player mode each player sits on their own side of the phone and moves their mallet with a finger, at the same time. In levels the opponent gets stronger each time, and some tables have bumpers, ice or a narrow goal. The fewer goals you concede, the more stars.</p>' },
+    ru: { g_air: 'Аэрохоккей', d_air: 'Защищайте ворота и забивайте в реальном времени',
+      air_help: 'Двигайте пальцем, чтобы двигать клюшку. Защищайте свои ворота и забивайте', air_two_help: 'Каждый игрок двигает свою клюшку на своей половине стола одновременно', air_goal: 'Гол!', air_to: 'До {n}', air_time: 'Время', air_sd: 'Овертайм', air_sudden: 'Овертайм: решает следующий гол',
+      ru_air: '<p>Вы играете в реальном времени на столе для аэрохоккея. Двигайте пальцем по экрану, и клюшка следует за ним чуть впереди пальца, чтобы её было видно. Клюшка остаётся на вашей половине стола. Цель — забить шайбу в ворота соперника и защитить свои.</p><p>Шайба отскакивает от бортов, и чем быстрее движется клюшка при ударе, тем быстрее летит шайба. После каждого гола шайба возвращается на сторону пропустившего. Если шайба слишком долго стоит, её возвращают в центр.</p><p>В матче побеждает тот, кто первым забьёт пять голов, или тот, кто ведёт, когда время вышло. При равенстве следующий гол решает. В игре вдвоём на одном телефоне каждый сидит со своей стороны и двигает клюшку пальцем одновременно. В уровнях соперник каждый раз сильнее, а на некоторых столах есть отбойники, лёд или узкие ворота. Чем меньше пропущенных голов, тем больше звёзд.</p>' },
+    es: { g_air: 'Hockey de aire', d_air: 'Defiende tu portería y marca en tiempo real',
+      air_help: 'Arrastra el dedo para mover la pala. Defiende tu portería y marca', air_two_help: 'Cada jugador mueve su pala en su mitad de la mesa, a la vez', air_goal: '¡Gol!', air_to: 'Hasta {n}', air_time: 'Tiempo', air_sd: 'Prórroga', air_sudden: 'Prórroga: el próximo gol decide',
+      ru_air: '<p>Juegas en tiempo real en una mesa de hockey de aire. Mueve el dedo por la pantalla y tu pala lo sigue, un poco por delante del dedo para que se vea. La pala se queda en tu mitad de la mesa. El objetivo es meter el disco en la portería rival y proteger la tuya.</p><p>El disco rebota en las paredes, y cuanto más rápido se mueve la pala al golpear, más rápido sale el disco. Tras cada gol el disco vuelve al lado que lo encajó. Si el disco se queda parado demasiado tiempo, se devuelve al centro.</p><p>Contra un rival gana quien llegue primero a cinco goles, o quien vaya por delante cuando se acabe el tiempo. En empate, el siguiente gol decide. En dos jugadores en un teléfono cada uno se sienta en su lado y mueve su pala con un dedo, a la vez. En los niveles el rival es más fuerte cada vez, y algunas mesas tienen topes, hielo o una portería estrecha. Cuantos menos goles encajes, más estrellas.</p>' },
+    ar: { g_air: 'هوكي الهواء', d_air: 'دافع عن مرماك وسجّل في الوقت الفعلي',
+      air_help: 'اسحب إصبعك لتحريك المضرب. دافع عن مرماك وسجّل', air_two_help: 'كل لاعب يحرّك مضربه في نصفه من الطاولة في الوقت نفسه', air_goal: 'هدف!', air_to: 'حتى {n}', air_time: 'الوقت', air_sd: 'وقت إضافي', air_sudden: 'وقت إضافي: الهدف التالي يحسم',
+      ru_air: '<p>تلعب في الوقت الفعلي على طاولة هوكي الهواء. حرّك إصبعك على الشاشة فيتبعه المضرب، أمام الإصبع قليلاً ليكون ظاهراً. يبقى المضرب في نصفك من الطاولة. الهدف إدخال القرص في مرمى الخصم وحماية مرماك.</p><p>القرص يرتد عن الجدران، وكلما كان المضرب أسرع عند الضرب كان القرص أسرع. بعد كل هدف يعود القرص إلى جهة من استقبل الهدف. إذا توقف القرص طويلاً يعاد إلى الوسط.</p><p>أمام خصم يفوز أول من يسجل خمسة أهداف، أو من يتقدم عند انتهاء الوقت. عند التعادل يحسم الهدف التالي. في لعب اثنين على هاتف واحد يجلس كل لاعب في جهته ويحرّك مضربه بإصبع في الوقت نفسه. في المراحل يصبح الخصم أقوى كل مرة، وفي بعض الطاولات مصدّات أو جليد أو مرمى ضيق. كلما قلّت الأهداف التي تستقبلها زادت النجوم.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -4978,10 +5113,211 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   };
 })();
 
+/* ===== src/air_ui.js ===== */
+'use strict';
+/* הוקי אוויר — זמן אמת: שלבים (בוט חזק יותר ושולחנות שונים), מול המחשב, שניים על אותו מסך (מגע מרובה), אונליין.
+   המנוע: Air. אונליין: הטלפון של המארח מריץ את המנוע, האורח שולח את נקודת היעד של המקל שלו ומקבל תמונת מצב ~30 פעמים בשנייה. */
+(function () {
+  const E = Air, LV = E.makeLevels(), CPU = [3, 9, 15, 22], TEAM = ['#4f8be8', '#e8584f'];
+  const PX = 0.7, GD = 0.9, VW = E.W + 2 * PX, VH = E.H + 2 * GD, FWD = 0.9, SEND = 1 / 30;
+  let lastSnd = 0; const snd = (f, gap) => { const n = performance.now(); if (n - lastSnd < (gap || 70)) return; lastSnd = n; f(); };
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botN = this.lv ? this.lv.n : (cfg.mode === 'cpu' ? CPU[(cfg.lv || 1) - 1] : 0);
+      this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0; this.host = !this.net || this.me === 0; this.flip = this.net && this.me === 1;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.state = 'count'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.acc = 0; this.ptr = {}; this.banner = null; this.shake = 0; this.over = null; this.view = null;
+      this.s = this.host ? E.make(this.lv ? this.lv.opt : { mv: this.botN ? [26, E.prof(this.botN).spd] : [26, 26] }) : null;
+      this.bot = this.botN ? E.newBot(this.lv ? this.lv.prof : E.prof(this.botN), this.seed) : null;
+      this.snap = null; this.snaps = []; this.mine = [0, 0, 0]; this.sentAt = 0; this.myT = null; this.gst = { sc: [0, 0], hold: 1.4, over: false, winner: null, t: 0, tmax: 150 };
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+    }
+    st() { return this.host ? this.s : this.gst; }
+    sides() { return this.mode === 'two' ? [0, 1] : [this.me]; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views one"><div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center">${two ? T('air_two_help') : T('air_help')}</div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el); const box = $('.pv', el); this.view = { box, cv: $('canvas', box), cs: 10, ctx: null, w: 0, h: 0 };
+      this.bindInput(this.view);
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      const v = this.view, r = v.box.getBoundingClientRect(); v.cs = Math.max(8, Math.min((r.width - 2) / VW, (r.height - 2) / VH)); const d = Math.min(window.devicePixelRatio || 1, 2), w = VW * v.cs, h = VH * v.cs;
+      v.w = w; v.h = h; v.cv.width = Math.round(w * d); v.cv.height = Math.round(h * d); v.cv.style.width = w + 'px'; v.cv.style.height = h + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+    }
+    /* canvas px <-> table units (the guest sees the table turned half a turn so that it is always at the bottom) */
+    toC(x, y) { const v = this.view, cs = v.cs; return this.flip ? [(PX + E.W - x) * cs, (GD + y) * cs] : [(PX + x) * cs, (GD + E.H - y) * cs]; }
+    toT(px, py) { const v = this.view, cs = v.cs, a = px / cs - PX, b = py / cs - GD; return this.flip ? { x: E.W - a, y: b } : { x: a, y: E.H - b }; }
+    /* ---------- input ---------- */
+    bindInput(v) {
+      const loc = e => { const r = v.cv.getBoundingClientRect(); return this.toT((e.clientX - r.left) * (v.w / r.width), (e.clientY - r.top) * (v.h / r.height)); };
+      const aim = (side, p) => this.setMine(side, p.x, p.y + (side === 0 ? FWD : -FWD));      // the mallet sits a little ahead of the finger so that it stays visible
+      v.cv.addEventListener('pointerdown', e => {
+        e.preventDefault(); if (this.state !== 'play' && this.state !== 'count') return; try { v.cv.setPointerCapture(e.pointerId); } catch (x) {}
+        const p = loc(e); let side = this.mode === 'two' ? (p.y > E.H / 2 ? 1 : 0) : this.me; if (this.mode === 'two' && Object.values(this.ptr).includes(side)) return; this.ptr[e.pointerId] = side; aim(side, p);
+      });
+      v.cv.addEventListener('pointermove', e => { const side = this.ptr[e.pointerId]; if (side == null) return; aim(side, loc(e)); });
+      const up = e => { delete this.ptr[e.pointerId]; }; v.cv.addEventListener('pointerup', up); v.cv.addEventListener('pointercancel', up); v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    setMine(side, x, y) {
+      if (this.host) { if (this.s) E.setTarget(this.s, side, x, y); } else { const z = E.zone(1, x, y); this.myT = { x: z.x, y: z.y }; }
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      try {
+        if (!this.paused) this.update(dt);
+        this.t += dt; this.draw();
+      } catch (e) { this.derr = (this.derr || 0) + 1; if (this.derr < 4) console.error('air frame', e && e.message); }
+      this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    update(dt) {
+      if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.state = 'play'; SFX.go(); this.msg.textContent = ''; } return; }
+      if (this.state !== 'play') { if (this.shake > 0) this.shake -= dt; return; }
+      if (this.shake > 0) this.shake -= dt;
+      if (this.host) {
+        const s = this.s; this.acc += dt; let n = Math.min(60, Math.floor(this.acc / E.DT)); this.acc -= n * E.DT;
+        while (n-- > 0) { if (this.bot) E.botStep(this.bot, s, 1); E.step(s); if (s.ev.length) { this.events(s.ev); this.evq = (this.evq || []).concat(s.ev.map(x => x.type === 'goal' ? 'g' + x.side : x.type === 'hit' ? 'h' : x.type === 'end' ? 'e' : 'w')); s.ev.length = 0; } if (s.over) break; }
+        if (this.net) { this.sentAt += dt; if (this.sentAt >= SEND) { this.sentAt = 0; this.sendState(); } }
+        if (s.over) { if (this.net) this.sendState(); this.state = 'end'; setTimeout(() => this.finish({ res: s.winner }), 900); }
+      } else {
+        // guest: follow my own mallet locally, send its target, interpolate the host snapshots
+        this.sentAt += dt; if (this.myT && this.sentAt >= SEND) { this.sentAt = 0; Net.link.send({ type: 'in', x: +this.myT.x.toFixed(3), y: +this.myT.y.toFixed(3) }); }
+        const m = this.mine; if (this.myT) { const dx = this.myT.x - m[0], dy = this.myT.y - m[1], d = Math.hypot(dx, dy), lim = 26 * dt; if (d <= lim) { m[0] = this.myT.x; m[1] = this.myT.y; } else { m[0] += dx / d * lim; m[1] += dy / d * lim; } }
+        const g = this.gst; if (g.over && this.state === 'play') { this.state = 'end'; setTimeout(() => this.finish({ res: g.winner }), 900); }
+      }
+    }
+    events(list) {
+      list.forEach(ev => {
+        if (ev.type === 'hit') snd(() => SFX.hit(), 60); else if (ev.type === 'wall' || ev.type === 'post' || ev.type === 'bump') snd(() => SFX.tap(), 70);
+        else if (ev.type === 'goal') { const mine = this.mode === 'two' || ev.side === this.me; this.banner = { side: ev.side, t: 0 }; this.shake = 0.3; if (this.mode === 'two' || mine) { SFX.win(); vib(30); } else { SFX.lose(); vib(15); } }
+        else if (ev.type === 'sudden') toast(T('air_sudden'), 2200);
+      });
+    }
+    sendState() {
+      const s = this.s, p = s.puck, r = x => Math.round(x * 1000) / 1000;
+      Net.link.send({ type: 'st', p: [r(p.x), r(p.y), r(p.vx), r(p.vy)], m: [[r(s.m[0].x), r(s.m[0].y)], [r(s.m[1].x), r(s.m[1].y)]], sc: s.score.slice(), h: r(Math.max(0, s.hold)), t: r(s.t), o: s.over ? 1 : 0, w: s.winner, e: this.evq || [], su: s.sudden ? 1 : 0 }); this.evq = [];
+    }
+    onMessage(m) {
+      if (m.type === 'in' && this.host && this.s) { E.setTarget(this.s, 1, +m.x, +m.y); }
+      else if (m.type === 'st' && !this.host) {
+        const g = this.gst, prev = g.sc.slice(); g.sc = m.sc; g.hold = m.h; g.over = !!m.o; g.winner = m.w; g.t = m.t; g.su = m.su; this.snap = { at: performance.now(), p: m.p, m: m.m };
+        if (this.state === 'count') { this.cd = Math.min(this.cd, 0.2); }
+        (m.e || []).forEach(c => { if (c[0] === 'g') this.events([{ type: 'goal', side: +c[1] }]); else if (c === 'h') this.events([{ type: 'hit' }]); else if (c === 'w') this.events([{ type: 'wall' }]); });
+        if (!this.myT && !this.mine[2]) { this.mine[0] = m.m[1][0]; this.mine[1] = m.m[1][1]; this.mine[2] = 1; }
+        if (m.sc[0] !== prev[0] || m.sc[1] !== prev[1]) { this.mine[0] = m.m[1][0]; this.mine[1] = m.m[1][1]; if (this.myT) this.myT = null; }
+      } else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('air'), sc = this.st().score || this.st().sc; let html = '', btns = '';
+      if (m === 'solo') {
+        const win = end.res === 0, n = this.lv.n, g = this.lv.opt.goals, stars = !win ? 0 : sc[1] === 0 ? 3 : sc[1] <= Math.floor(g / 2) ? 2 : 1;
+        if (win) { if (stars > (st.lv[n] || 0)) st.lv[n] = stars; st.games++; st.wins++; saveP(); Meta.after('air', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div><p>🏒 ${sc[0]} : ${sc[1]}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('air', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>🏒 ${sc[0]} : ${sc[1]}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('air', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('air', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>🏒 ${sc[0]} : ${sc[1]}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; const online = this.net; this.paused = !online;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- drawing ---------- */
+    draw() { if (this.view.ctx) this.drawTable(); this.stat(); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return; const g = this.st(), sc = g.score || g.sc, t = Math.max(0, (g.tmax || 150) - (g.t || 0)), tm = Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+      if (this.mode === 'solo') st.innerHTML = `<span>🏒 ${sc[0]} : ${sc[1]}<small>${T('air_to', { n: this.lv.opt.goals })}</small></span><span>${g.sudden || g.su ? T('air_sd') : tm}<small>${T('air_time')}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">${sc[0]}<small>${esc(this.nameOf(0))}</small></span><span>${g.sudden || g.su ? T('air_sd') : tm}<small>${T('air_time')}</small></span><span style="color:${TEAM[1]}">${sc[1]}<small>${esc(this.nameOf(1))}</small></span>`;
+    }
+    pos() {      // where to draw everything now (host: the engine; guest: snapshots, own mallet local)
+      if (this.host) { const s = this.s; return { p: [s.puck.x, s.puck.y], m: [[s.m[0].x, s.m[0].y], [s.m[1].x, s.m[1].y]], hold: s.hold }; }
+      const sn = this.snap, g = this.gst; if (!sn) return { p: [E.W / 2, E.H / 2], m: [[E.HOME[0][0], E.HOME[0][1]], [E.HOME[1][0], E.HOME[1][1]]], hold: g.hold };
+      const age = Math.min(0.12, (performance.now() - sn.at) / 1000), moving = g.hold <= 0; const px = sn.p[0] + (moving ? sn.p[2] * age : 0), py = sn.p[1] + (moving ? sn.p[3] * age : 0);
+      return { p: [Math.max(E.PR, Math.min(E.W - E.PR, px)), py], m: [sn.m[0], this.mine[2] ? [this.mine[0], this.mine[1]] : sn.m[1]], hold: g.hold };
+    }
+    drawTable() {
+      const v = this.view, c = v.ctx, cs = v.cs, X = x => x * cs, ice = this.lv ? this.lv.opt.fr < 0.1 : false, o = this.host ? this.s.obst : (this.lv ? this.lv.opt.obst || [] : []), bgA = Art.get('bg-air'), tbA = Art.get('air-table'), P = this.pos(), g = this.st(), sc = g.score || g.sc;
+      c.clearRect(0, 0, v.w, v.h); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, v.w, v.h, 14); c.clip();
+      if (this.shake > 0) c.translate((Math.random() - 0.5) * cs * 0.18 * this.shake * 3, (Math.random() - 0.5) * cs * 0.18 * this.shake * 3);
+      if (bgA) c.drawImage(bgA, 0, 0, v.w, v.h); else { const gr = c.createLinearGradient(0, 0, 0, v.h); gr.addColorStop(0, '#1b2236'); gr.addColorStop(1, '#10151f'); c.fillStyle = gr; c.fillRect(0, 0, v.w, v.h); }
+      const a = this.toC(0, E.H), b = this.toC(E.W, 0), x0 = Math.min(a[0], b[0]), y0 = Math.min(a[1], b[1]), tw = Math.abs(b[0] - a[0]), th = Math.abs(b[1] - a[1]);
+      // rails and table
+      c.fillStyle = '#2d3550'; c.beginPath(); c.roundRect(x0 - cs * 0.5, y0 - cs * 0.5, tw + cs, th + cs, cs * 0.5); c.fill();
+      if (tbA) { c.save(); c.beginPath(); c.roundRect(x0, y0, tw, th, cs * 0.3); c.clip(); c.drawImage(tbA, x0, y0, tw, th); c.restore(); }
+      else { const gr = c.createLinearGradient(x0, y0, x0 + tw, y0 + th); gr.addColorStop(0, ice ? '#d6f1ff' : '#c9e2f5'); gr.addColorStop(1, ice ? '#b6dff7' : '#a8cbe6'); c.fillStyle = gr; c.beginPath(); c.roundRect(x0, y0, tw, th, cs * 0.3); c.fill(); }
+      c.save(); c.beginPath(); c.roundRect(x0, y0, tw, th, cs * 0.3); c.clip();
+      c.strokeStyle = 'rgba(40,90,160,.45)'; c.lineWidth = cs * 0.09; const mid = this.toC(0, E.H / 2)[1]; c.beginPath(); c.moveTo(x0, mid); c.lineTo(x0 + tw, mid); c.stroke(); c.beginPath(); c.arc(x0 + tw / 2, mid, cs * 1.1, 0, 7); c.stroke();
+      [0, 1].forEach(i => { const gy = this.toC(E.W / 2, i ? E.H : 0), r = cs * 1.55; c.beginPath(); c.arc(gy[0], gy[1], r, 0, 7); c.stroke(); });
+      if (ice) { c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = cs * 0.04; for (let k = 0; k < 7; k++) { c.beginPath(); c.moveTo(x0 + tw * (0.1 + 0.13 * k), y0 + th * 0.15); c.lineTo(x0 + tw * (0.02 + 0.14 * k), y0 + th * 0.55); c.stroke(); } }
+      c.restore();
+      // goals
+      for (let i = 0; i < 2; i++) { const gw = g.gw ? g.gw[i] : (this.lv && this.lv.opt.gw ? this.lv.opt.gw[i] : E.GW), q = this.toC(E.W / 2 - gw / 2, i ? E.H : 0), r2 = this.toC(E.W / 2 + gw / 2, i ? E.H : 0), gx = Math.min(q[0], r2[0]), bt = this.toC(0, i ? E.H : 0)[1], dir = (this.toC(0, i ? E.H : 0)[1] < this.toC(0, E.H / 2)[1]) ? -1 : 1; c.fillStyle = '#0b0e16'; c.fillRect(gx, dir > 0 ? bt - cs * 0.05 : bt - cs * 0.65, Math.abs(q[0] - r2[0]), cs * 0.7); c.fillStyle = TEAM[i]; c.fillRect(gx - cs * 0.12, dir > 0 ? bt - cs * 0.06 : bt - cs * 0.16, cs * 0.24, cs * 0.22); c.fillRect(gx + Math.abs(q[0] - r2[0]) - cs * 0.12, dir > 0 ? bt - cs * 0.06 : bt - cs * 0.16, cs * 0.24, cs * 0.22); }
+      // scores on the table
+      c.save(); c.globalAlpha = 0.22; c.fillStyle = '#16365e'; c.font = `900 ${cs * 2.6}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      for (let i = 0; i < 2; i++) { const q = this.toC(E.W * 0.82, i ? E.H * 0.75 : E.H * 0.25); c.save(); c.translate(q[0], q[1]); if (this.mode === 'two' && i === 1) c.rotate(Math.PI); c.fillText(String(sc[i]), 0, 0); c.restore(); } c.restore();
+      // obstacles
+      o.forEach(ob => { const q = this.toC(ob[0], ob[1]), R = ob[2] * cs; const gr = c.createRadialGradient(q[0] - R * 0.3, q[1] - R * 0.35, R * 0.1, q[0], q[1], R); gr.addColorStop(0, '#fff6c9'); gr.addColorStop(1, '#d9a21b'); c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.arc(q[0] + R * 0.12, q[1] + R * 0.2, R, 0, 7); c.fill(); c.fillStyle = gr; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill(); c.strokeStyle = '#7a5a0a'; c.lineWidth = cs * 0.06; c.stroke(); });
+      // mallets and puck
+      for (let i = 0; i < 2; i++) { const q = this.toC(P.m[i][0], P.m[i][1]), R = E.MR * cs; c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.arc(q[0] + R * 0.15, q[1] + R * 0.22, R, 0, 7); c.fill(); const art = Art.get('air-mallet' + i);
+        if (art) c.drawImage(art, q[0] - R * 1.1, q[1] - R * 1.1, R * 2.2, R * 2.2); else { const gr = c.createRadialGradient(q[0] - R * 0.3, q[1] - R * 0.35, R * 0.1, q[0], q[1], R); gr.addColorStop(0, '#fff'); gr.addColorStop(0.3, TEAM[i]); gr.addColorStop(1, '#10151f'); c.fillStyle = gr; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill(); c.fillStyle = 'rgba(255,255,255,.35)'; c.beginPath(); c.arc(q[0], q[1], R * 0.42, 0, 7); c.fill(); c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = cs * 0.05; c.beginPath(); c.arc(q[0], q[1], R * 0.42, 0, 7); c.stroke(); } }
+      { const q = this.toC(P.p[0], P.p[1]), R = E.PR * cs, art = Art.get('air-puck'); c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.arc(q[0] + R * 0.15, q[1] + R * 0.25, R, 0, 7); c.fill(); if (art) c.drawImage(art, q[0] - R * 1.1, q[1] - R * 1.1, R * 2.2, R * 2.2); else { const gr = c.createRadialGradient(q[0] - R * 0.3, q[1] - R * 0.3, R * 0.1, q[0], q[1], R); gr.addColorStop(0, '#6b7280'); gr.addColorStop(1, '#15171c'); c.fillStyle = gr; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill(); c.strokeStyle = '#ffd877'; c.lineWidth = cs * 0.05; c.beginPath(); c.arc(q[0], q[1], R * 0.62, 0, 7); c.stroke(); } }
+      // serve countdown and goal banner
+      if (this.state === 'play' && P.hold > 0.05) { c.fillStyle = 'rgba(255,255,255,.9)'; c.font = `900 ${cs * 1.5}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.strokeStyle = 'rgba(0,0,0,.5)'; c.lineWidth = cs * 0.2; c.lineJoin = 'round'; const tx = Math.ceil(P.hold / 0.5); if (this.banner) { this.banner.t += 1 / 60; const col = TEAM[this.banner.side]; c.fillStyle = col; c.strokeText(T('air_goal'), v.w / 2, v.h / 2); c.fillText(T('air_goal'), v.w / 2, v.h / 2); } else { c.strokeText('·'.repeat(tx), v.w / 2, v.h / 2); c.fillText('·'.repeat(tx), v.w / 2, v.h / 2); } } else if (this.banner && P.hold <= 0.05) this.banner = null;
+      c.restore();
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'air'; setPlayBg('air'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.air = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#1b2236"/><rect x="25" y="6" width="40" height="58" rx="6" fill="#bcd9ef"/><path d="M25 35H65" stroke="#4a7fb8" stroke-width="2"/><circle cx="45" cy="35" r="7" fill="none" stroke="#4a7fb8" stroke-width="2"/><circle cx="45" cy="18" r="6" fill="#e8584f"/><circle cx="45" cy="52" r="6" fill="#4f8be8"/><circle cx="52" cy="35" r="3" fill="#15171c"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'air', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf', 'bowl', 'arch'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳', bowl: '🎳', arch: '🏹' };
+const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf', 'bowl', 'arch', 'air'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳', bowl: '🎳', arch: '🏹', air: '🏒' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
