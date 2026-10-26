@@ -168,6 +168,7 @@ input.txt:focus{border-color:var(--acc)}
 #play[data-bg=hoop]{background:linear-gradient(180deg,#26335a,#3b4f86 45%,#a96d33)}
 #play[data-bg=air]{background:linear-gradient(180deg,#1b2236,#12192a 60%,#0d121e)}
 #play[data-bg=tt]{background:linear-gradient(180deg,#202a44,#141b2e 60%,#0e1220)}
+#play[data-bg=fb]{background:linear-gradient(180deg,#2a2218,#1c2616 60%,#10170d)}
 #play[data-bg=arch]{background:linear-gradient(180deg,#1d3a4f,#1f3a31 60%,#16281f)}
 #play[data-bg=dart]{background:linear-gradient(180deg,#2a1f33,#3a2a46 50%,#25303f)}
 #play[data-bg=box]{background:linear-gradient(180deg,#1b1f33,#3a3350 50%,#34406a)}
@@ -192,7 +193,7 @@ input.txt:focus{border-color:var(--acc)}
 <div id="album" class="sc"></div>
 <div id="about" class="sc"></div>
 <script>
-const ART_FILES = ["air-mallet0","air-mallet1","air-puck","air-table","arch-arrow","arch-target","bg-air","bg-arch","bg-bowl","bg-box","bg-dart","bg-hoop","bg-pen","bg-tt","bowl-lane","box-head1","box-head2","dart-dart","golf-grass","golf-sand","golf-wall","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-air","tile-arch","tile-bowl","tile-box","tile-dart","tile-golf","tile-hoop","tile-pen","tile-snk","tile-tt","tt-ball","tt-paddle0","tt-paddle1"];
+const ART_FILES = ["air-mallet0","air-mallet1","air-puck","air-table","arch-arrow","arch-target","bg-air","bg-arch","bg-bowl","bg-box","bg-dart","bg-fb","bg-hoop","bg-pen","bg-tt","bowl-lane","box-head1","box-head2","dart-dart","fb-ball","fb-field","fb-man0","fb-man1","golf-grass","golf-sand","golf-wall","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-air","tile-arch","tile-bowl","tile-box","tile-dart","tile-fb","tile-golf","tile-hoop","tile-pen","tile-snk","tile-tt","tt-ball","tt-paddle0","tt-paddle1"];
 /* ===== src/nestlink.js ===== */
 /* =====================================================================
    NestLink 1.1 — AppNest online multiplayer module (WebRTC via PeerJS)
@@ -1693,6 +1694,130 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.TT = API;
 })(typeof self !== 'undefined' ? self : this);
 
+/* ===== engines/fb.js ===== */
+/* SportNest — table football engine (pure, deterministic).
+   Top-down table: x across (0..W), y along (0..H). Side 0 defends the goal at y = 0 and plays upward, side 1 defends y = H.
+   Each side has four rods (0 keeper, 1 defence, 2 midfield, 3 attack); a rod slides sideways and carries 1/2/5/3 men. A man is a round blocker; a kick swings
+   the whole rod's men forward for a moment and sends the ball off the contact normal, so the direction of a shot is decided by where the ball meets the man.
+   A player controls one rod at a time: the one chosen by autoRod (the nearest rod behind the ball). Fixed step 1/240 s, only + - * / and sqrt inside the
+   simulation, so the same inputs always give the same game. Real-time online play: the host runs this engine, the guest sends its rod target and kicks.
+   Bots only look at the ball (with a reaction delay) and at the public positions of the other rods. */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const W = 6, H = 10, GW = 2.2, BR = 0.25, MR = 0.35, POST = 0.12, DT = 1 / 240, VP = 22, E_W = 0.85, E_M = 0.5, KX = 0.75, KCD = 0.45, SERVE = 1.2, MVD = 12;
+  const ROD = [{ n: 1, y: 0.8, sp: 0 }, { n: 2, y: 2.1, sp: 2.4 }, { n: 5, y: 4.4, sp: 1.1 }, { n: 3, y: 6.6, sp: 1.9 }];
+  ROD.forEach((r, i) => { r.rg = Math.min(W / 2 - MR - (r.n - 1) / 2 * r.sp, i === 0 ? 2.0 : 9); });
+  const ry = (side, i) => side ? H - ROD[i].y : ROD[i].y;
+  const manX = (side, i, ox, k) => W / 2 + ox + (k - (ROD[i].n - 1) / 2) * ROD[i].sp;
+  /* ---------- the table ---------- */
+  function make(o) {
+    o = o || {}; const s = { W, H, ball: { x: W / 2, y: H / 2, vx: 0, vy: 0 }, score: [0, 0], t: 0, hold: SERVE, goals: o.goals || 5, tmax: o.tmax || 150, sudden: false, over: false, winner: null, still: 0, ev: [], fr: o.fr == null ? 0.5 : o.fr, gw: o.gw ? o.gw.slice() : [GW, GW], mv: o.mv ? o.mv.slice() : [MVD, MVD], last: -1, first: o.first || 0,
+      r: [0, 1].map(() => ROD.map(() => ({ ox: 0, vx: 0, tx: 0, kt: -1, kp: 0, cd: 0, ext: 0, extv: 0 }))) };
+    s.posts = []; for (let i = 0; i < 2; i++) { const y = i ? H : 0; s.posts.push([W / 2 - s.gw[i] / 2, y, POST], [W / 2 + s.gw[i] / 2, y, POST]); }
+    serve(s, s.first); return s;
+  }
+  function serve(s, c) {           // the side that conceded (c) gets the ball sent towards it
+    s.ball.x = W / 2; s.ball.y = H / 2; s.ball.vx = 0; s.ball.vy = 0; s.hold = SERVE; s.still = 0; s.sv = c;
+  }
+  function setRod(s, side, i, tx) { if (tx !== tx) return; s.r[side][i].tx = clamp(+tx, -ROD[i].rg, ROD[i].rg); }
+  function kick(s, side, i, pw) { const r = s.r[side][i]; if (r.cd > 0 || r.kt >= 0 || pw !== pw) return false; r.kt = 0; r.kp = clamp(+pw, 0.15, 1); r.cd = KCD; s.ev.push({ type: 'kick', side, rod: i }); return true; }
+  // the rod a player is steering: the nearest one behind the ball (the ball is in front of its men), with some stickiness
+  function autoRod(side, cur, by) {
+    const yb = side ? H - by : by; let best = -1, bd = 1e9;
+    for (let i = 0; i < 4; i++) { if (ROD[i].y <= yb + 0.3) { const d = yb - ROD[i].y; if (d < bd) { bd = d; best = i; } } }
+    if (best < 0) best = 0;
+    if (cur >= 0 && cur !== best && ROD[cur].y <= yb + 0.6 && yb - ROD[cur].y < bd + 0.7) return cur;
+    return best;
+  }
+  function circle(b, cx, cy, r, e, vx, vy, push) {    // ball against a circle (a man, moving at vx,vy, or a post)
+    const dx = b.x - cx, dy = b.y - cy, rr = BR + r, d2 = dx * dx + dy * dy; if (d2 >= rr * rr) return 0;
+    const d = d2 > 1e-12 ? Math.sqrt(d2) : 1e-6, nx = d2 > 1e-12 ? dx / d : 0, ny = d2 > 1e-12 ? dy / d : 1;
+    b.x = cx + nx * rr; b.y = cy + ny * rr; const vn = (b.vx - vx) * nx + (b.vy - vy) * ny; if (vn < 0) { b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny; return 1; } return 0;
+  }
+  function step(s) {
+    if (s.over) return; const b = s.ball;
+    for (let sd = 0; sd < 2; sd++) {       // rods slide towards their targets and swing when kicking
+      const dir = sd ? -1 : 1;
+      for (let i = 0; i < 4; i++) {
+        const r = s.r[sd][i], dx = clamp(r.tx, -ROD[i].rg, ROD[i].rg) - r.ox, lim = s.mv[sd] * DT;
+        if (dx * dx <= lim * lim) { r.vx = dx / DT; r.ox += dx; } else { r.vx = dx > 0 ? s.mv[sd] : -s.mv[sd]; r.ox += r.vx * DT; }
+        if (r.cd > 0) r.cd -= DT;
+        if (r.kt >= 0) {
+          const vk = 5 + 15 * r.kp, ts = KX / vk; r.kt += DT;
+          if (r.kt < ts) { r.ext = vk * r.kt; r.extv = vk; } else if (r.kt < ts + 0.15) { r.ext = KX - (r.kt - ts) * (KX / 0.15); r.extv = -KX / 0.15; } else { r.kt = -1; r.ext = 0; r.extv = 0; }
+        }
+      }
+    }
+    if (s.hold > 0) { s.hold -= DT; if (s.hold <= 0) { b.vy = s.sv === 0 ? -3 : 3; b.vx = 0; } return; }
+    s.t += DT;
+    if (s.tmax && s.t >= s.tmax && !s.sudden) { if (s.score[0] !== s.score[1]) { s.over = true; s.winner = s.score[0] > s.score[1] ? 0 : 1; s.ev.push({ type: 'end' }); return; } s.sudden = true; s.ev.push({ type: 'sudden' }); }
+    const k = 1 - s.fr * DT; b.vx *= k; b.vy *= k; b.x += b.vx * DT; b.y += b.vy * DT;
+    for (let sd = 0; sd < 2; sd++) {
+      const dir = sd ? -1 : 1;
+      for (let i = 0; i < 4; i++) { const r = s.r[sd][i], y = ry(sd, i) + dir * r.ext, vy = dir * r.extv;
+        for (let m = 0; m < ROD[i].n; m++) if (circle(b, manX(sd, i, r.ox, m), y, MR, E_M, r.vx, vy)) { s.last = sd; s.ev.push({ type: 'hit', v: Math.sqrt(b.vx * b.vx + b.vy * b.vy), kick: r.kt >= 0 ? 1 : 0 }); } }
+    }
+    for (let i = 0; i < s.posts.length; i++) { const o = s.posts[i]; if (circle(b, o[0], o[1], o[2], E_W, 0, 0)) s.ev.push({ type: 'post' }); }
+    if (b.x < BR) { b.x = BR; if (b.vx < 0) { b.vx = -b.vx * E_W; s.ev.push({ type: 'wall' }); } } else if (b.x > W - BR) { b.x = W - BR; if (b.vx > 0) { b.vx = -b.vx * E_W; s.ev.push({ type: 'wall' }); } }
+    const in0 = Math.abs(b.x - W / 2) < s.gw[0] / 2, in1 = Math.abs(b.x - W / 2) < s.gw[1] / 2;
+    if (b.y < BR && !in0) { b.y = BR; if (b.vy < 0) { b.vy = -b.vy * E_W; s.ev.push({ type: 'wall' }); } }
+    if (b.y > H - BR && !in1) { b.y = H - BR; if (b.vy > 0) { b.vy = -b.vy * E_W; s.ev.push({ type: 'wall' }); } }
+    if (b.y < -BR) goal(s, 1); else if (b.y > H + BR) goal(s, 0);
+    if (s.over) return;
+    const sp2 = b.vx * b.vx + b.vy * b.vy; if (sp2 > VP * VP) { const f = VP / Math.sqrt(sp2); b.vx *= f; b.vy *= f; }
+    if (sp2 < 0.09) { s.still += DT; if (s.still > 4) { b.x = W / 2; b.y = H / 2; b.vx = 0; b.vy = b.y < H / 2 ? 3 : -3; s.still = 0; s.ev.push({ type: 'reset' }); } } else s.still = 0;
+  }
+  function goal(s, scorer) {
+    s.score[scorer]++; s.ev.push({ type: 'goal', side: scorer });
+    if (s.score[scorer] >= s.goals || s.sudden) { s.over = true; s.winner = scorer; s.ev.push({ type: 'end' }); return; }
+    serve(s, 1 - scorer);
+  }
+  /* ---------- bots ---------- */
+  // profile: spd (rod speed), react (seconds of delay), err (tracking error, units), kerr (aim error, units), aggr (kick power 0..1), aim (0..1 uses the gaps in the goal), tol (how close the ball must be to the man before it kicks)
+  function profK(k) { k = clamp(k, -0.15, 1); return { spd: 5 + 7 * k, react: 0.30 - 0.22 * k, err: 0.05 + 0.5 * (1 - k) * (1 - k), kerr: 0.05 + 0.35 * (1 - k) * (1 - k), aggr: clamp(0.45 + 0.5 * k, 0.2, 1), aim: clamp(0.2 + 0.8 * k, 0, 1), tol: 0.25 + 0.2 * k }; }
+  const CALK = Array.from({ length: 24 }, (_, i) => Math.round((-0.15 + 0.85 * i / 23) * 1000) / 1000);
+  function prof(n) { return profK(CALK[clamp(Math.round(n), 1, 24) - 1]); }
+  function newBot(p, seed) { return { p, R: prng(seed || 1), h: [], sel: -1, jit: 0, jt: 0, aimOff: 0, ah: -1 }; }
+  function botStep(b, s, side) {
+    const p = b.p, R = b.R, bl = s.ball, dir = side ? -1 : 1, Y = y => side ? H - y : y;
+    b.h.push([bl.x, bl.y, bl.vx, bl.vy]); const lag = Math.round(p.react / DT); if (b.h.length > lag + 2) b.h.shift();
+    const o = b.h[Math.max(0, b.h.length - 1 - lag)], bx = o[0], by = o[1], bvx = o[2], bvy = o[3];
+    b.jt -= DT; if (b.jt <= 0) { b.jt = 0.3; b.jit = gauss(R); }
+    b.sel = autoRod(side, b.sel, by); const i = b.sel, rod = ROD[i], r = s.r[side][i]; s.mv[side] = p.spd;
+    // where the ball will be when it gets to this rod
+    const ryw = ry(side, i), dyb = (ryw - by) * dir * -1;      // > 0: the ball is ahead of the rod (in the rod's forward direction)
+    const toward = bvy * dir < -0.5; let t = 0.12; if (toward) t = clamp((by - ryw) / (bvy || 1e-6), 0, 0.5);
+    let px = bx + bvx * t; if (px < BR) px = BR + (BR - px); if (px > W - BR) px = W - BR - (px - (W - BR)); px = clamp(px, BR, W - BR);
+    // aim: choose a point in the goal, away from the keeper when the bot is good enough
+    const og = 1 - side, ok = s.r[og][0], keeperX = W / 2 + ok.ox, goalW = s.gw[og];
+    if (b.ah !== s.t * 0 + Math.round(bx * 5 + by * 7)) { }
+    const gap = keeperX < W / 2 ? 1 : -1; let gx = W / 2 + (R() < 0.5 + 0.4 * p.aim ? gap : -gap) * (0.3 + 0.55 * p.aim) * goalW / 2 + (1 - p.aim) * gauss(R) * 0.8;
+    const gy = side ? 0 : H, ang = Math.atan2(gx - px, Math.abs(gy - by) + 0.01), off = clamp(Math.sin(ang) * (BR + MR), -0.45, 0.45) + gauss(R) * p.kerr * 0.4;
+    // put the nearest man to the ball (with the aiming offset) on its line
+    let best = 0, bd = 1e9; for (let m = 0; m < rod.n; m++) { const d = Math.abs(manX(side, i, r.ox, m) - px); if (d < bd) { bd = d; best = m; } }
+    const baseX = W / 2 + (best - (rod.n - 1) / 2) * rod.sp, aimed = dyb > -0.1 && dyb < 1.4;
+    const want = px - (aimed ? off : 0) + b.jit * p.err * 0.5 - baseX; setRod(s, side, i, want);
+    // kick when the ball is right in front of the man and the man is on it
+    const mx = manX(side, i, r.ox, best), ahead = dyb;
+    if (ahead > MR + BR - 0.05 && ahead < MR + BR + 0.35 + p.tol * 0.4 && Math.abs(bx - mx - off) < p.tol * 0.5 + 0.05 && r.cd <= 0 && r.kt < 0 && s.hold <= 0) kick(s, side, i, clamp(p.aggr * (0.75 + 0.5 * R()), 0.2, 1));
+    for (let q = 0; q < 4; q++) if (q !== i) s.r[side][q].tx = clamp(s.r[side][q].tx, -ROD[q].rg, ROD[q].rg);
+  }
+  /* ---------- solo levels ---------- */
+  function levelOpt(n) {
+    const w = ((n - 1) / 6) | 0, pr = prof(n), o = { goals: n <= 12 ? 3 : 5, tmax: 150, mv: [MVD, pr.spd] };
+    if (w === 1 || w === 3) o.gw = [2.0, 2.4];
+    if (w === 2 || w === 3) o.fr = 0.2;
+    return o;
+  }
+  function makeLevels() { const out = []; for (let n = 1; n <= 24; n++) out.push({ n, opt: levelOpt(n), prof: prof(n), seed: 9700 + n * 23 }); return out; }
+  function stars(lv, sc) { const g = lv.opt.goals; if (sc[0] <= sc[1]) return 0; return sc[1] === 0 ? 3 : sc[1] <= Math.floor(g / 2) ? 2 : 1; }
+  const API = { W, H, GW, BR, MR, POST, DT, VP, SERVE, KX, KCD, MVD, ROD, prng, gauss, clamp, ry, manX, make, serve, setRod, kick, autoRod, step, goal, profK, prof, CALK, newBot, botStep, levelOpt, makeLevels, stars };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Fb = API;
+})(typeof self !== 'undefined' ? self : this);
+
 /* ===== src/i18n.js ===== */
 /* SportNest — shell strings: he, en, ru, es, ar. Missing key falls back to English. Game strings live in i18n_<game>.js */
 const LANG = {
@@ -2949,10 +3074,33 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_fb.js ===== */
+/* SportNest — Table football strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_fb: 'כדורגל שולחן', d_fb: 'מוטות, שחקנים קטנים וכדור מהיר: הגנו, הוציאו כדור ובעטו לשער',
+      fb_help: 'גררו את האצבע כדי להזיז את המוט הקרוב לכדור. תנועה מהירה קדימה בועטת, ואצבע שנייה על המסך בועטת גם כן', fb_two_help: 'כל שחקן שולט בצד שלו של השולחן. גררו להזזה, החליקו קדימה לבעיטה', fb_goal: 'גול!', fb_to: 'עד {n}', fb_time: 'זמן', fb_sd: 'גול הזהב', fb_sudden: 'גול הזהב! הבא מנצח',
+      ru_fb: '<p>זה כדורגל שולחן במבט מלמעלה. לכל קבוצה ארבעה מוטות: שוער, שני מגנים, חמישה קשרים ושלושה חלוצים. השחקנים הקטנים על המוט זזים ימינה ושמאלה יחד, ואפשר לבעוט בהם קדימה. המטרה היא להכניס את הכדור לשער של היריב.</p><p>איך שולטים: המשחק בוחר לבד את המוט שנמצא מאחורי הכדור, והוא מודגש בצהוב. גררו את האצבע ימינה ושמאלה והשחקן הקרוב אליה יתיישר מתחת לאצבע. כדי לבעוט, החליקו את האצבע מהר קדימה, או הניחו אצבע שנייה על המסך. תנועה מהירה בועטת חזק, ותנועה איטית מעבירה את הכדור בעדינות. אחרי בעיטה יש רגע קצר שבו אי אפשר לבעוט שוב.</p><p>הכללים: הראשון לשלושה גולים מנצח, ובשלבים הגבוהים הראשון לחמישה. אם נגמר הזמן והתוצאה שווה, הגול הבא מכריע. הכדור שנתקע ללא תנועה חוזר למרכז. בכל שלב היריב חזק יותר, ויש שולחנות עם שערים צרים או משטח מהיר. בשני שחקנים על טלפון אחד כל שחקן שולט בצד שלו.</p>' },
+    en: { g_fb: 'Table Football', d_fb: 'Rods, little players and a fast ball: defend, clear and shoot',
+      fb_help: 'Drag your finger to move the rod nearest the ball. A fast swipe forward kicks, and so does a tap with a second finger', fb_two_help: 'Each player controls their own side. Drag to move, swipe forward to kick', fb_goal: 'Goal!', fb_to: 'First to {n}', fb_time: 'Time', fb_sd: 'Golden goal', fb_sudden: 'Golden goal! Next one wins',
+      ru_fb: '<p>This is table football seen from above. Each team has four rods: a goalkeeper, two defenders, five midfielders and three forwards. The little players on a rod slide left and right together and can kick forward. The aim is to put the ball in the opponent’s goal.</p><p>Controls: the game picks the rod behind the ball by itself, and it is highlighted in yellow. Drag your finger left and right and the player nearest to it lines up under your finger. To kick, swipe your finger quickly forward, or tap the screen with a second finger. A fast swipe kicks hard, a slow one passes the ball gently. After a kick there is a short moment when you cannot kick again.</p><p>Rules: the first to three goals wins, and in the higher levels the first to five. If time runs out with the score level, the next goal decides. A ball that stops moving goes back to the centre. The opponent is stronger in every level, and some tables have narrower goals or a faster surface. In two-player mode each player controls their own side.</p>' },
+    ru: { g_fb: 'Настольный футбол', d_fb: 'Штанги, маленькие игроки и быстрый мяч: защищайтесь, выбивайте и бейте по воротам',
+      fb_help: 'Двигайте пальцем, чтобы сдвинуть штангу рядом с мячом. Быстрый свайп вперёд бьёт по мячу, как и касание вторым пальцем', fb_two_help: 'Каждый игрок управляет своей стороной. Тяните для движения, свайп вперёд — удар', fb_goal: 'Гол!', fb_to: 'До {n}', fb_time: 'Время', fb_sd: 'Золотой гол', fb_sudden: 'Золотой гол! Следующий решает',
+      ru_fb: '<p>Это настольный футбол с видом сверху. У каждой команды четыре штанги: вратарь, два защитника, пять полузащитников и три нападающих. Маленькие игроки на штанге двигаются вправо и влево вместе и могут бить вперёд. Цель — забить мяч в ворота соперника.</p><p>Управление: игра сама выбирает штангу позади мяча, она подсвечена жёлтым. Водите пальцем вправо и влево, и ближайший к нему игрок встанет под палец. Чтобы ударить, быстро проведите пальцем вперёд или коснитесь экрана вторым пальцем. Быстрый свайп бьёт сильно, медленный мягко передаёт мяч. После удара есть короткая пауза, когда ударить снова нельзя.</p><p>Правила: побеждает тот, кто первым забьёт три гола, на высоких уровнях — пять. Если время вышло при равном счёте, решает следующий гол. Мяч, который остановился, возвращается в центр. На каждом уровне соперник сильнее, а на некоторых столах узкие ворота или быстрое поле. В режиме для двух игроков каждый управляет своей стороной.</p>' },
+    es: { g_fb: 'Futbolín', d_fb: 'Barras, muñecos y una bola rápida: defiende, despeja y dispara',
+      fb_help: 'Arrastra el dedo para mover la barra más cercana a la bola. Un deslizamiento rápido hacia delante chuta, y un toque con un segundo dedo también', fb_two_help: 'Cada jugador controla su lado. Arrastra para mover y desliza hacia delante para chutar', fb_goal: '¡Gol!', fb_to: 'Hasta {n}', fb_time: 'Tiempo', fb_sd: 'Gol de oro', fb_sudden: '¡Gol de oro! El próximo gana',
+      ru_fb: '<p>Es un futbolín visto desde arriba. Cada equipo tiene cuatro barras: portero, dos defensas, cinco centrocampistas y tres delanteros. Los muñecos de una barra se desplazan juntos a izquierda y derecha y pueden chutar hacia delante. El objetivo es meter la bola en la portería rival.</p><p>Controles: el juego elige solo la barra que está detrás de la bola y la resalta en amarillo. Arrastra el dedo a izquierda y derecha y el muñeco más cercano se coloca bajo tu dedo. Para chutar, desliza el dedo rápido hacia delante o toca la pantalla con un segundo dedo. Un deslizamiento rápido chuta fuerte y uno lento pasa la bola con suavidad. Tras un chut hay un breve momento en que no puedes chutar de nuevo.</p><p>Reglas: gana quien marque primero tres goles, y en los niveles altos cinco. Si se acaba el tiempo con empate, decide el siguiente gol. Una bola que se queda parada vuelve al centro. El rival es más fuerte en cada nivel y algunas mesas tienen porterías más estrechas o un campo más rápido. En dos jugadores cada uno controla su lado.</p>' },
+    ar: { g_fb: 'كرة القدم الطاولة', d_fb: 'قضبان ولاعبون صغار وكرة سريعة: دافع وأبعد الكرة وسدّد',
+      fb_help: 'اسحب إصبعك لتحريك القضيب الأقرب إلى الكرة. السحب السريع للأمام يركل الكرة، ولمسة بإصبع ثانٍ تركلها أيضاً', fb_two_help: 'كل لاعب يتحكم في جهته. اسحب للتحريك واسحب للأمام للركل', fb_goal: 'هدف!', fb_to: 'حتى {n}', fb_time: 'الوقت', fb_sd: 'الهدف الذهبي', fb_sudden: 'الهدف الذهبي! التالي يحسم',
+      ru_fb: '<p>هذه كرة قدم طاولة من منظور علوي. لكل فريق أربعة قضبان: حارس، ومدافعان، وخمسة لاعبي وسط، وثلاثة مهاجمين. يتحرك اللاعبون الصغار على القضيب معاً يميناً ويساراً ويمكنهم الركل للأمام. الهدف إدخال الكرة في مرمى الخصم.</p><p>التحكم: تختار اللعبة بنفسها القضيب الذي خلف الكرة ويظهر باللون الأصفر. حرّك إصبعك يميناً ويساراً فيقف أقرب لاعب تحت إصبعك. للركل اسحب إصبعك بسرعة إلى الأمام أو المس الشاشة بإصبع ثانٍ. السحب السريع يركل بقوة والبطيء يمرر الكرة بلطف. بعد الركلة توجد لحظة قصيرة لا يمكن فيها الركل مرة أخرى.</p><p>القواعد: يفوز من يسجل ثلاثة أهداف أولاً، وفي المستويات العالية خمسة. إذا انتهى الوقت والنتيجة متعادلة يحسم الهدف التالي. الكرة التي تتوقف تعود إلى المنتصف. الخصم أقوى في كل مستوى، وبعض الطاولات فيها مرمى أضيق أو سطح أسرع. في وضع لاعبين اثنين يتحكم كل لاعب في جهته.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '2.0.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -5737,10 +5885,248 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   };
 })();
 
+/* ===== src/fb_ui.js ===== */
+'use strict';
+/* כדורגל שולחן — זמן אמת: שלבים (יריב חזק יותר ושולחנות שונים), מול המחשב, שניים על אותו מסך (מגע מרובה), אונליין.
+   המנוע: Fb. המשתמש מחליק את המוט הקרוב ביותר לכדור (נבחר אוטומטית, מאחורי הכדור) ובועט בתנועה מהירה קדימה או במגע של אצבע שנייה.
+   אונליין: הטלפון של המארח מריץ את המנוע, האורח שולח את המוט שבחר, את מיקומו ובעיטות, ומקבל תמונת מצב ~30 פעמים בשנייה. */
+(function () {
+  const E = Fb, LV = E.makeLevels(), CPU = [3, 9, 15, 22], TEAM = ['#4f8be8', '#e8584f'];
+  const PX = 0.8, GD = 0.9, VW = E.W + 2 * PX, VH = E.H + 2 * GD, SEND = 1 / 30, KSPD = 11;
+  let lastSnd = 0; const snd = (f, gap) => { const n = performance.now(); if (n - lastSnd < (gap || 70)) return; lastSnd = n; f(); };
+  const baseX = (i, m) => E.W / 2 + (m - (E.ROD[i].n - 1) / 2) * (E.ROD[i].sp || 0);
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botN = this.lv ? this.lv.n : (cfg.mode === 'cpu' ? CPU[(cfg.lv || 1) - 1] : 0);
+      this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0; this.host = !this.net || this.me === 0; this.flip = this.net && this.me === 1;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.state = 'count'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.acc = 0; this.banner = null; this.shake = 0; this.view = null;
+      this.fp = [null, null]; this.sel = [-1, -1]; this.sentAt = 0; this.myTx = 0; this.myRod = -1; this.myOx = 0;
+      const o = this.lv ? { ...this.lv.opt } : { goals: 5, mv: [E.MVD, this.botN ? E.prof(this.botN).spd : E.MVD] }; o.seed = this.seed;
+      this.s = this.host ? E.make(o) : null;
+      this.bot = this.botN ? E.newBot(this.lv ? this.lv.prof : E.prof(this.botN), this.seed) : null;
+      this.snap = null; this.gst = { sc: [0, 0], hold: E.SERVE, over: false, winner: null, t: 0, tmax: 150, su: 0 };
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+    }
+    st() { return this.host ? this.s : this.gst; }
+    sides() { return this.mode === 'two' ? [0, 1] : [this.me]; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views one"><div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center">${two ? T('fb_two_help') : T('fb_help')}</div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el); const box = $('.pv', el); this.view = { box, cv: $('canvas', box), cs: 10, ctx: null, w: 0, h: 0 };
+      this.bindInput(this.view);
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      const v = this.view, r = v.box.getBoundingClientRect(); v.cs = Math.max(8, Math.min((r.width - 2) / VW, (r.height - 2) / VH)); const d = Math.min(window.devicePixelRatio || 1, 2), w = VW * v.cs, h = VH * v.cs;
+      v.w = w; v.h = h; v.cv.width = Math.round(w * d); v.cv.height = Math.round(h * d); v.cv.style.width = w + 'px'; v.cv.style.height = h + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+    }
+    /* canvas px <-> table units (the guest sees the table turned half a turn so that it is always at the bottom) */
+    toC(x, y) { const v = this.view, cs = v.cs; return this.flip ? [(PX + E.W - x) * cs, (GD + y) * cs] : [(PX + x) * cs, (GD + E.H - y) * cs]; }
+    toT(px, py) { const v = this.view, cs = v.cs, a = px / cs - PX, b = py / cs - GD; return this.flip ? { x: E.W - a, y: b } : { x: a, y: E.H - b }; }
+    /* ---------- state to show ---------- */
+    pos() {
+      if (this.host) { const s = this.s; return { b: [s.ball.x, s.ball.y], r: [s.r[0].map(r => [r.ox, r.ext]), s.r[1].map(r => [r.ox, r.ext])], hold: s.hold }; }
+      const sn = this.snap, g = this.gst; if (!sn) return { b: [E.W / 2, E.H / 2], r: [[0, 1, 2, 3].map(() => [0, 0]), [0, 1, 2, 3].map(() => [0, 0])], hold: g.hold };
+      const age = Math.min(0.12, (performance.now() - sn.at) / 1000), moving = g.hold <= 0;
+      const r = [sn.r[0].map(a => a.slice()), sn.r[1].map(a => a.slice())]; if (this.myRod >= 0) r[this.me][this.myRod][0] = this.myOx;
+      return { b: [E.clamp(sn.b[0] + (moving ? sn.b[2] * age : 0), E.BR, E.W - E.BR), sn.b[1] + (moving ? sn.b[3] * age : 0)], r, hold: g.hold };
+    }
+    ballY() { if (this.host) return this.s.ball.y; const sn = this.snap; return sn ? sn.b[1] : E.H / 2; }
+    /* ---------- input ---------- */
+    bindInput(v) {
+      const loc = e => { const r = v.cv.getBoundingClientRect(); return this.toT((e.clientX - r.left) * (v.w / r.width), (e.clientY - r.top) * (v.h / r.height)); };
+      v.cv.addEventListener('pointerdown', e => {
+        e.preventDefault(); if (this.state !== 'play' && this.state !== 'count') return; try { v.cv.setPointerCapture(e.pointerId); } catch (x) {}
+        const p = loc(e), side = this.mode === 'two' ? (p.y > E.H / 2 ? 1 : 0) : this.me, f = this.fp[side];
+        if (f && f.id !== e.pointerId) { this.doKick(side, 0.8); return; }       // a second finger kicks
+        this.fp[side] = { id: e.pointerId, x: p.x, y: p.y, t: performance.now(), sp: 0, armed: true, man: -1, rod: -1 }; this.grab(side, p.x); this.steer(side);
+      });
+      v.cv.addEventListener('pointermove', e => {
+        let side = -1; for (const sd of this.sides()) if (this.fp[sd] && this.fp[sd].id === e.pointerId) side = sd; if (side < 0) return;
+        const f = this.fp[side], p = loc(e), now = performance.now(), dt = Math.max(0.008, (now - f.t) / 1000), fwd = (side === 0 ? p.y - f.y : f.y - p.y) / dt;
+        f.sp = f.sp * 0.5 + fwd * 0.5; f.x = p.x; f.y = p.y; f.t = now;
+        if (f.armed && f.sp > KSPD) { f.armed = false; this.doKick(side, E.clamp((f.sp - 7) / 20, 0.25, 1)); } else if (!f.armed && f.sp < 3) f.armed = true;
+        this.steer(side);
+      });
+      const up = e => { for (const sd of [0, 1]) if (this.fp[sd] && this.fp[sd].id === e.pointerId) this.fp[sd] = null; }; v.cv.addEventListener('pointerup', up); v.cv.addEventListener('pointercancel', up); v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    curOx(side, rod) { if (this.host) return this.s.r[side][rod].ox; return side === this.me && rod === this.myRod ? this.myOx : (this.snap ? this.snap.r[side][rod][0] : 0); }
+    grab(side, fx) {       // which man of the steered rod is under the finger
+      const f = this.fp[side]; if (!f) return; const rod = this.sel[side]; if (rod < 0) return; let best = 0, bd = 1e9, ox = this.curOx(side, rod);
+      for (let m = 0; m < E.ROD[rod].n; m++) { const d = Math.abs(E.manX(side, rod, ox, m) - fx); if (d < bd) { bd = d; best = m; } }
+      f.man = best; f.rod = rod;
+    }
+    steer(side) {           // put the grabbed man under the finger
+      const f = this.fp[side]; if (!f) return; const rod = this.sel[side]; if (rod < 0) return; if (f.rod !== rod) this.grab(side, f.x);
+      const tx = E.clamp(f.x - baseX(rod, f.man), -E.ROD[rod].rg, E.ROD[rod].rg);
+      if (this.host) { if (this.s) E.setRod(this.s, side, rod, tx); } else { this.myRod = rod; this.myTx = tx; }
+    }
+    doKick(side, pw) {
+      const rod = this.sel[side]; if (rod < 0 || this.state !== 'play') return;
+      if (this.host) { if (this.s) E.kick(this.s, side, rod, pw); } else { this.myRod = rod; Net.link.send({ type: 'in', r: rod, x: +this.myTx.toFixed(3), k: +pw.toFixed(2) }); snd(() => SFX.hit(), 60); }
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      try {
+        if (!this.paused) this.update(dt);
+        this.t += dt; this.draw();
+      } catch (e) { this.derr = (this.derr || 0) + 1; if (this.derr < 4) console.error('fb frame', e && e.message); }
+      this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    pickRods() {
+      for (const sd of this.sides()) { const was = this.sel[sd]; this.sel[sd] = E.autoRod(sd, was, this.ballY()); if (this.sel[sd] !== was) this.steer(sd); }
+    }
+    update(dt) {
+      this.pickRods();
+      if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.state = 'play'; SFX.go(); this.msg.textContent = ''; } return; }
+      if (this.state !== 'play') { if (this.shake > 0) this.shake -= dt; return; }
+      if (this.shake > 0) this.shake -= dt;
+      if (this.host) {
+        const s = this.s; this.acc += dt; let n = Math.min(60, Math.floor(this.acc / E.DT)); this.acc -= n * E.DT;
+        while (n-- > 0) { if (this.bot) E.botStep(this.bot, s, 1); E.step(s); if (s.ev.length) { this.events(s.ev); if (this.net) this.evq = (this.evq || []).concat(s.ev.map(x => x.type === 'goal' ? 'g' + x.side : x.type === 'kick' ? 'k' : x.type === 'hit' ? 'h' : x.type === 'end' ? 'e' : 'w')); s.ev.length = 0; } if (s.over) break; }
+        if (this.net) { this.sentAt += dt; if (this.sentAt >= SEND) { this.sentAt = 0; this.sendState(); } }
+        if (s.over) { if (this.net) this.sendState(); this.state = 'end'; setTimeout(() => this.finish({ res: s.winner }), 900); }
+      } else {
+        this.sentAt += dt; if (this.myRod >= 0 && this.sentAt >= SEND) { this.sentAt = 0; Net.link.send({ type: 'in', r: this.myRod, x: +this.myTx.toFixed(3) }); }
+        if (this.myRod >= 0) { const d = this.myTx - this.myOx, lim = E.MVD * dt; this.myOx = Math.abs(d) <= lim ? this.myTx : this.myOx + Math.sign(d) * lim; }
+        const g = this.gst; if (g.over && this.state === 'play') { this.state = 'end'; setTimeout(() => this.finish({ res: g.winner }), 900); }
+      }
+    }
+    events(list) {
+      list.forEach(ev => {
+        if (ev.type === 'kick') snd(() => SFX.hit(), 60); else if (ev.type === 'hit') { if (ev.v > 4) snd(() => SFX.tap(), 50); } else if (ev.type === 'wall' || ev.type === 'post') snd(() => SFX.tap(), 80);
+        else if (ev.type === 'goal') { const mine = this.mode === 'two' || ev.side === this.me; this.banner = { side: ev.side, t: 0 }; this.shake = 0.3; if (this.mode === 'two' || mine) { SFX.win(); vib(30); } else { SFX.lose(); vib(15); } }
+        else if (ev.type === 'sudden') toast(T('fb_sudden'), 2200);
+      });
+    }
+    sendState() {
+      const s = this.s, b = s.ball, r = x => Math.round(x * 1000) / 1000;
+      Net.link.send({ type: 'st', b: [r(b.x), r(b.y), r(b.vx), r(b.vy)], r: [s.r[0].map(q => [r(q.ox), r(q.ext)]), s.r[1].map(q => [r(q.ox), r(q.ext)])], sc: s.score.slice(), h: r(Math.max(0, s.hold)), t: r(s.t), o: s.over ? 1 : 0, w: s.winner, e: this.evq || [], su: s.sudden ? 1 : 0 }); this.evq = [];
+    }
+    onMessage(m) {
+      if (m.type === 'in' && this.host && this.s) { const r = m.r | 0; if (r >= 0 && r < 4) { E.setRod(this.s, 1, r, +m.x); if (m.k) E.kick(this.s, 1, r, +m.k); } }
+      else if (m.type === 'st' && !this.host) {
+        const g = this.gst, prev = g.sc.slice(); g.sc = m.sc; g.hold = m.h; g.over = !!m.o; g.winner = m.w; g.t = m.t; g.su = m.su; this.snap = { at: performance.now(), b: m.b, r: m.r };
+        if (this.state === 'count') { this.cd = Math.min(this.cd, 0.2); }
+        (m.e || []).forEach(c => { if (c[0] === 'g') this.events([{ type: 'goal', side: +c.slice(1) }]); else if (c === 'h') this.events([{ type: 'hit', v: 9 }]); else if (c === 'w') this.events([{ type: 'wall' }]); else if (c === 'k' && this.myRod < 0) this.events([{ type: 'kick' }]); });
+        if (this.myRod >= 0 && Math.abs(this.myOx - this.myTx) > 3) this.myOx = m.r[this.me][this.myRod][0];
+        if (m.sc[0] !== prev[0] || m.sc[1] !== prev[1]) { this.myRod = -1; }
+      } else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('fb'), sc = this.st().score || this.st().sc; let html = '', btns = '';
+      if (m === 'solo') {
+        const win = end.res === 0, n = this.lv.n, stars = win ? E.stars(this.lv, sc) : 0;
+        if (win) { if (stars > (st.lv[n] || 0)) st.lv[n] = stars; st.games++; st.wins++; saveP(); Meta.after('fb', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div><p>⚽ ${sc[0]} : ${sc[1]}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('fb', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>⚽ ${sc[0]} : ${sc[1]}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('fb', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('fb', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>⚽ ${sc[0]} : ${sc[1]}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; const online = this.net; this.paused = !online;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- drawing ---------- */
+    draw() { if (this.view.ctx) this.drawTable(); this.stat(); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return; const g = this.st(), sc = g.score || g.sc, t = Math.max(0, (g.tmax || 150) - (g.t || 0)), tm = Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+      if (this.mode === 'solo') st.innerHTML = `<span>⚽ ${sc[0]} : ${sc[1]}<small>${T('fb_to', { n: this.lv.opt.goals })}</small></span><span>${g.sudden || g.su ? T('fb_sd') : tm}<small>${T('fb_time')}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">${sc[0]}<small>${esc(this.nameOf(0))}</small></span><span>${g.sudden || g.su ? T('fb_sd') : tm}<small>${T('fb_time')}</small></span><span style="color:${TEAM[1]}">${sc[1]}<small>${esc(this.nameOf(1))}</small></span>`;
+    }
+    drawTable() {
+      const v = this.view, c = v.ctx, cs = v.cs, P = this.pos(), g = this.st(), sc = g.score || g.sc, bgA = Art.get('bg-fb'), fdA = Art.get('fb-field'), gw = (g.gw || (this.lv && this.lv.opt.gw) || [E.GW, E.GW]);
+      c.clearRect(0, 0, v.w, v.h); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, v.w, v.h, 14); c.clip();
+      if (this.shake > 0) c.translate((Math.random() - 0.5) * cs * 0.18 * this.shake * 3, (Math.random() - 0.5) * cs * 0.18 * this.shake * 3);
+      if (bgA) c.drawImage(bgA, 0, 0, v.w, v.h); else { const gr = c.createLinearGradient(0, 0, 0, v.h); gr.addColorStop(0, '#26301f'); gr.addColorStop(1, '#141a10'); c.fillStyle = gr; c.fillRect(0, 0, v.w, v.h); }
+      const a = this.toC(0, E.H), b = this.toC(E.W, 0), x0 = Math.min(a[0], b[0]), y0 = Math.min(a[1], b[1]), tw = Math.abs(b[0] - a[0]), th = Math.abs(b[1] - a[1]);
+      c.fillStyle = '#4a3220'; c.beginPath(); c.roundRect(x0 - cs * 0.5, y0 - cs * 0.5, tw + cs, th + cs, cs * 0.45); c.fill();
+      if (fdA) { c.save(); c.beginPath(); c.roundRect(x0, y0, tw, th, cs * 0.2); c.clip(); c.drawImage(fdA, x0, y0, tw, th); c.restore(); }
+      else { const gr = c.createLinearGradient(0, y0, 0, y0 + th); gr.addColorStop(0, '#2f8a3f'); gr.addColorStop(1, '#27763a'); c.fillStyle = gr; c.beginPath(); c.roundRect(x0, y0, tw, th, cs * 0.2); c.fill(); for (let i = 0; i < 10; i += 2) { c.fillStyle = 'rgba(255,255,255,.035)'; c.fillRect(x0, y0 + th / 10 * i, tw, th / 10); } }
+      c.save(); c.beginPath(); c.roundRect(x0, y0, tw, th, cs * 0.2); c.clip();
+      c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = cs * 0.06; const mid = this.toC(0, E.H / 2)[1]; c.beginPath(); c.moveTo(x0, mid); c.lineTo(x0 + tw, mid); c.stroke(); c.beginPath(); c.arc(x0 + tw / 2, mid, cs * 1.1, 0, 7); c.stroke();
+      [0, 1].forEach(i => { const q = this.toC(E.W / 2, i ? E.H : 0), sg = this.toC(0, i ? E.H : 0)[1] < mid ? 1 : -1; c.strokeRect(q[0] - cs * 1.9, sg > 0 ? q[1] : q[1] - cs * 1.6, cs * 3.8, cs * 1.6); });
+      c.restore();
+      // goals
+      for (let i = 0; i < 2; i++) { const w2 = gw[i], q = this.toC(E.W / 2 - w2 / 2, i ? E.H : 0), r2 = this.toC(E.W / 2 + w2 / 2, i ? E.H : 0), gx = Math.min(q[0], r2[0]), bt = this.toC(0, i ? E.H : 0)[1], dir = bt < mid ? -1 : 1; c.fillStyle = '#0b0e16'; c.fillRect(gx, dir > 0 ? bt - cs * 0.05 : bt - cs * 0.75, Math.abs(q[0] - r2[0]), cs * 0.8); c.fillStyle = TEAM[i]; c.fillRect(gx - cs * 0.12, dir > 0 ? bt - cs * 0.06 : bt - cs * 0.16, cs * 0.24, cs * 0.22); c.fillRect(gx + Math.abs(q[0] - r2[0]) - cs * 0.12, dir > 0 ? bt - cs * 0.06 : bt - cs * 0.16, cs * 0.24, cs * 0.22); }
+      // rods and men
+      for (let sd = 0; sd < 2; sd++) {
+        const dir = sd ? -1 : 1;
+        for (let i = 0; i < 4; i++) {
+          const rr = P.r[sd][i], y = E.ry(sd, i), l = this.toC(-0.55, y), rt = this.toC(E.W + 0.55, y), steer = this.sel[sd] === i && (this.mode === 'two' || sd === this.me);
+          c.strokeStyle = steer ? 'rgba(255,230,120,.95)' : '#b8bec9'; c.lineWidth = cs * (steer ? 0.12 : 0.1); c.lineCap = 'round'; c.beginPath(); c.moveTo(l[0], l[1]); c.lineTo(rt[0], rt[1]); c.stroke();
+          const kn = this.toC(sd === 0 ? E.W + 0.55 : -0.55, y); c.fillStyle = TEAM[sd]; c.beginPath(); c.arc(kn[0], kn[1], cs * 0.2, 0, 7); c.fill();
+          for (let m = 0; m < E.ROD[i].n; m++) {
+            const q = this.toC(E.manX(sd, i, rr[0], m), y + dir * rr[1]), R = E.MR * cs, art = Art.get('fb-man' + sd);
+            c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.arc(q[0] + R * 0.12, q[1] + R * 0.2, R, 0, 7); c.fill();
+            if (art) { c.save(); c.translate(q[0], q[1]); if ((sd === 1) !== this.flip) c.rotate(Math.PI); c.drawImage(art, -R * 1.25, -R * 1.25, R * 2.5, R * 2.5); c.restore(); continue; }
+            const gr = c.createRadialGradient(q[0] - R * 0.3, q[1] - R * 0.35, R * 0.1, q[0], q[1], R); gr.addColorStop(0, '#fff'); gr.addColorStop(0.3, TEAM[sd]); gr.addColorStop(1, '#10151f'); c.fillStyle = gr; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill();
+            c.fillStyle = 'rgba(255,255,255,.4)'; c.beginPath(); c.arc(q[0], q[1], R * 0.4, 0, 7); c.fill(); c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = cs * 0.05; c.stroke();
+          }
+        }
+      }
+      // ball
+      { const q = this.toC(P.b[0], P.b[1]), R = E.BR * cs, art = Art.get('fb-ball'); c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.arc(q[0] + R * 0.15, q[1] + R * 0.25, R, 0, 7); c.fill();
+        if (art) c.drawImage(art, q[0] - R * 1.1, q[1] - R * 1.1, R * 2.2, R * 2.2); else { const gr = c.createRadialGradient(q[0] - R * 0.3, q[1] - R * 0.3, R * 0.1, q[0], q[1], R); gr.addColorStop(0, '#fff'); gr.addColorStop(1, '#b9c0cc'); c.fillStyle = gr; c.beginPath(); c.arc(q[0], q[1], R, 0, 7); c.fill(); c.fillStyle = '#222'; c.beginPath(); c.arc(q[0], q[1], R * 0.4, 0, 7); c.fill(); } }
+      // serve countdown and goal banner
+      if (this.state === 'play' && P.hold > 0.05) { c.fillStyle = 'rgba(255,255,255,.9)'; c.font = `900 ${cs * 1.5}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.strokeStyle = 'rgba(0,0,0,.5)'; c.lineWidth = cs * 0.2; c.lineJoin = 'round'; const tx = Math.ceil(P.hold / 0.4); if (this.banner) { c.fillStyle = TEAM[this.banner.side]; c.strokeText(T('fb_goal'), v.w / 2, v.h / 2); c.fillText(T('fb_goal'), v.w / 2, v.h / 2); } else { c.strokeText('·'.repeat(tx), v.w / 2, v.h / 2 + cs * 1.4); c.fillText('·'.repeat(tx), v.w / 2, v.h / 2 + cs * 1.4); } } else if (this.banner && P.hold <= 0.05) this.banner = null;
+      c.restore();
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'fb'; setPlayBg('fb'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.fb = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#26301f"/><rect x="22" y="6" width="46" height="58" rx="5" fill="#2f8a3f" stroke="#4a3220" stroke-width="3"/><path d="M22 35H68" stroke="#fff" stroke-opacity=".6"/><path d="M18 20H72M18 44H72" stroke="#b8bec9" stroke-width="2"/><circle cx="38" cy="20" r="4" fill="#e8584f"/><circle cx="52" cy="20" r="4" fill="#e8584f"/><circle cx="45" cy="44" r="4" fill="#4f8be8"/><circle cx="45" cy="32" r="3" fill="#fff"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'fb', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf', 'bowl', 'arch', 'air', 'tt'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳', bowl: '🎳', arch: '🏹', air: '🏒', tt: '🏓' };
+const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf', 'bowl', 'arch', 'air', 'tt', 'fb'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳', bowl: '🎳', arch: '🏹', air: '🏒', tt: '🏓', fb: '⚽' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
