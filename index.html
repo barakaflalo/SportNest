@@ -166,6 +166,7 @@ input.txt:focus{border-color:var(--acc)}
 :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] :root[data-mode=day] 
 #play[data-bg=pen]{background:linear-gradient(180deg,#27406a,#2f5d86 40%,#3d8a55)}
 #play[data-bg=hoop]{background:linear-gradient(180deg,#26335a,#3b4f86 45%,#a96d33)}
+#play[data-bg=arch]{background:linear-gradient(180deg,#1d3a4f,#1f3a31 60%,#16281f)}
 #play[data-bg=dart]{background:linear-gradient(180deg,#2a1f33,#3a2a46 50%,#25303f)}
 #play[data-bg=box]{background:linear-gradient(180deg,#1b1f33,#3a3350 50%,#34406a)}
 #play[data-bg=snk]{background:linear-gradient(180deg,#2a1a12,#3a2316 50%,#1d140e)}
@@ -189,7 +190,7 @@ input.txt:focus{border-color:var(--acc)}
 <div id="album" class="sc"></div>
 <div id="about" class="sc"></div>
 <script>
-const ART_FILES = ["bg-bowl","bg-box","bg-dart","bg-hoop","bg-pen","bowl-lane","box-head1","box-head2","dart-dart","golf-grass","golf-sand","golf-wall","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-bowl","tile-box","tile-dart","tile-golf","tile-hoop","tile-pen","tile-snk"];
+const ART_FILES = ["arch-arrow","arch-target","bg-arch","bg-bowl","bg-box","bg-dart","bg-hoop","bg-pen","bowl-lane","box-head1","box-head2","dart-dart","golf-grass","golf-sand","golf-wall","hoop-ball","hoop-def","hoop-player","pen-ball","pen-dummy","pen-keeper","snk-cue","snk-felt","snk-wood","tile-arch","tile-bowl","tile-box","tile-dart","tile-golf","tile-hoop","tile-pen","tile-snk"];
 /* ===== src/nestlink.js ===== */
 /* =====================================================================
    NestLink 1.1 — AppNest online multiplayer module (WebRTC via PeerJS)
@@ -1355,6 +1356,85 @@ function sweepDist(x, y, kp, kl) { const rx = HRX * KREACH[kLv(kl)], ry = HRY * 
   }
   const API = { LEN, WD, BR, PR, DT, VMIN, VMAX, X0, HX, HK, HOOKX, YMIN, YMAX, GUT, FRAMES, prng, gauss, clamp, pinPos, make, standing, clampShot, qv, begin, step, run, settle, deliver, where, total, newMatch, matchRoll, matchAfter, matchResult, makeLevels, newLevel, levelRoll, levelState, search, tryShot, botShot, preview, copyOn };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Bowl = API;
+})(typeof self !== 'undefined' ? self : this);
+
+/* ===== engines/arch.js ===== */
+/* SportNest — archery engine (pure, deterministic).
+   Target coordinates: unit = radius of the outer ring; x right, y up; ten rings of 0.1 each (10 in the middle, 1 at the edge).
+   An arrow lands at aim + wind drift + sway(hold time) + a little noise. The wind is public (both players see it) and changes every arrow:
+   a base wind per end plus a gust per arrow, all derived from (seed, end, arrow index), so two phones agree on every arrow.
+   The sway is a fast wobble that calms while you hold your breath and builds again when you hold too long; a longer distance makes it bigger
+   and the wind pushes further. Bots only know their own accuracy and the public wind; there is no hidden information in this game. */
+(function (root) {
+  'use strict';
+  const prng = sd => { let a = sd >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const gauss = R => { const u = R() || 1e-9, v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const RING = 0.1, ENDS = 4, PER = 3, SUDDEN = 3, DREF = 40, WK = 0.2;      // ring width, ends in a match, arrows per end, sudden-death ends, reference distance (m), one wind unit = one ring width at DREF
+  /* ---------- the target ---------- */
+  function hit(x, y) {
+    const r = Math.hypot(x, y); if (r > 1) return { zone: 'miss', pts: 0, r };
+    const pts = 10 - Math.min(9, Math.floor(r / RING + 1e-9)); return { zone: pts === 10 ? 'gold' : 'ring', pts, r };
+  }
+  // rule: {k:'all'} | {k:'min', n}   (with 'min' only arrows in ring n or better score)
+  function score(h, rule) { if (!rule || rule.k === 'all') return h.pts; if (rule.k === 'min') return h.pts >= rule.n ? h.pts : 0; return 0; }
+  /* ---------- wind ---------- */
+  function wind(ctx) {      // {x, y}: how far (in ring widths at the reference distance) the wind pushes the arrow
+    const Wm = ctx.wmax || 0; if (!Wm) return { x: 0, y: 0, s: 0 };
+    const end = Math.floor((ctx.i || 0) / PER), Rb = prng((ctx.seed || 1) * 977 + end * 131 + 11), Rg = prng((ctx.seed || 1) * 389 + (ctx.i || 0) * 53 + 3);
+    const s0 = (0.25 + 0.75 * Rb()) * Wm, th = Rb() * 6.283185307, gs = 1 + (Rg() - 0.5) * 0.5, gt = (Rg() - 0.5) * 0.5, s = s0 * gs;
+    return { x: Math.round(s * Math.cos(th + gt) * 10) / 10, y: Math.round(s * 0.4 * Math.sin(th + gt) * 10) / 10, s };
+  }
+  const drift = ctx => { const w = wind(ctx), k = WK * (ctx.d || DREF) / DREF; return { x: w.x * k, y: w.y * k }; };
+  /* ---------- sway ---------- */
+  const A0 = 1.1, FM = 0.16, T1S = 0.9, GROW = 0.35;
+  const amp = (t, w) => A0 * (w || 1) * (t < T1S ? 1 - (1 - FM) * (t / T1S) : Math.min(1, FM + (t - T1S) * GROW));
+  const phases = ctx => { const R = prng((ctx.seed || 1) * 173 + (ctx.side || 0) * 29 + (ctx.i || 0) * 13 + 7); return { px: R() * 6.283, py: R() * 6.283, wx: 6.1 + R() * 1.6, wy: 7.4 + R() * 1.6, R }; };
+  function sway(t, ctx, ph) { ph = ph || phases(ctx); const a = amp(t, ctx.w); return { dx: a * Math.cos(ph.wx * t + ph.px), dy: a * Math.sin(ph.wy * t + ph.py) }; }
+  const NOISE = 0.03;
+  function land(aim, hold, ctx) {
+    const ph = phases(ctx), t = clamp(+hold || 0, 0, 4), s = sway(t, ctx, ph), w = ctx.w || 1, dr = drift(ctx);
+    const x = aim.x + dr.x + s.dx + gauss(ph.R) * NOISE * w, y = aim.y + dr.y + s.dy + gauss(ph.R) * NOISE * w, h = hit(x, y);
+    return { x, y, hit: h, pts: score(h, ctx.rule), T: 0.55 + 0.004 * (ctx.d || DREF) };
+  }
+  const clampAim = a => ({ x: clamp(+a.x || 0, -1.3, 1.3), y: clamp(+a.y || 0, -1.3, 1.3) });
+  /* ---------- bots ---------- */
+  const TAU = [0, 0.3, 0.12, 0.06, 0.03], LOOK = [0, 0, 1, 1, 1], COMP = [0, 0.35, 0.8, 1, 1];     // timing spread; waits for the wobble to cross its aim; how much of the wind it corrects for
+  function botHold(lvl, ctx, R) {
+    if (lvl === 1 || !LOOK[lvl]) return 0.15 + R() * 2.2;
+    const ph = phases(ctx); let best = 1, bv = 1e9; for (let t = 0.45; t <= 1.5; t += 0.01) { const s = sway(t, ctx, ph), m = Math.hypot(s.dx, s.dy); if (m < bv) { bv = m; best = t; } }
+    return clamp(best + gauss(R) * TAU[lvl], 0.1, 3.5);
+  }
+  function botArrow(lvl, ctx, R) {
+    const dr = drift(ctx), c = COMP[lvl]; let aim = { x: -dr.x * c, y: -dr.y * c };
+    if (lvl === 1) { const a = R() * 6.283, r = Math.sqrt(R()) * 0.3; aim = { x: aim.x + Math.cos(a) * r, y: aim.y + Math.sin(a) * r }; }
+    const hold = botHold(lvl, ctx, R), t = clamp(hold, 0, 4), s = sway(t, ctx);
+    if (lvl >= 3) { aim.x -= s.dx * 0; }     // the bot already picked the moment where the wobble is smallest
+    return { aim, hold };
+  }
+  /* ---------- match: ends of 3 arrows each (side 0 then side 1), then sudden-death ends ---------- */
+  const throwerOf = i => Math.floor(i / PER) % 2, roundOf = i => Math.floor(i / (PER * 2));
+  function decided(sc, k) { if (k < ENDS) return null; const lead = sc[0] - sc[1]; if (lead) return lead > 0 ? 0 : 1; return k >= ENDS + SUDDEN ? 'draw' : null; }
+  /* ---------- solo levels ---------- */
+  const EV3 = [0,9.6,9.5,9.4,9.2,9.1,9,9,8.9,8.8,8.6,8.6,8.1,8.4,8.3,8.2,8.1,8,5.9,7.8,7.7,7.6,7.5,7.4,2.2];     // expected points per arrow of a steady (level 3) player under each level; calibrated by tools/arch_sim.js
+  const FR = n => 0.52 + 0.022 * ((n - 1) % 6) + 0.075 * (((n - 1) / 6) | 0);
+  const RULE_AT = { 6: 6, 12: 7, 18: 8, 24: 9 };
+  function levelCfg(n) { const d = 20 + Math.round((n - 1) * 50 / 23), wmax = n <= 3 ? 0 : Math.min(3.2, 0.5 + 0.12 * n), arrows = n <= 12 ? 9 : 12; return { d, wmax, arrows, w: d / DREF, rule: RULE_AT[n] ? { k: 'min', n: RULE_AT[n] } : { k: 'all' } }; }
+  function makeLevels(ev) {
+    ev = ev || EV3; const out = [];
+    for (let n = 1; n <= 24; n++) {
+      const c = levelCfg(n), e = ev[n] || 5, goal = Math.max(10, Math.round(c.arrows * e * FR(n) / 5) * 5);
+      out.push({ n, arrows: c.arrows, rule: c.rule, w: c.w, d: c.d, wmax: c.wmax, goal, g2: Math.round(goal * 1.25 / 5) * 5 + 5, g3: Math.round(goal * 1.5 / 5) * 5 + 10, seed: 7000 + n * 23 });
+    }
+    return out;
+  }
+  function levelState(lv, pts, k) {
+    if (pts >= lv.g3) return { done: true, win: true, stars: 3 };
+    if (k >= lv.arrows) return pts >= lv.g2 ? { done: true, win: true, stars: 2 } : pts >= lv.goal ? { done: true, win: true, stars: 1 } : { done: true, win: false, stars: 0 };
+    return { done: false };
+  }
+  const API = { RING, ENDS, PER, SUDDEN, DREF, prng, gauss, clamp, hit, score, wind, drift, amp, sway, phases, land, clampAim, botHold, botArrow, TAU, COMP, throwerOf, roundOf, decided, levelCfg, makeLevels, levelState, EV3, NOISE, FR };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Arch = API;
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/i18n.js ===== */
@@ -2529,10 +2609,43 @@ ar: {
   for (const l in A) Object.assign(LANG[l], A[l]);
 })();
 
+/* ===== src/i18n_arch.js ===== */
+/* SportNest — Archery strings (he, en, ru, es, ar) */
+(function () {
+  const A = {
+    he: { g_arch: 'חץ וקשת', d_arch: 'מכוונים נגד הרוח, מרגיעים את היד ויורים',
+      arch_help: 'גררו לכוון, החזיקו כדי להרגיע את היד ושחררו. הרוח תסיט את החץ, אז כוונו נגדה', arch_two_help: 'כל שחקן יורה בתורו, על המטרה שלו', arch_wait: 'ממתין לירייה של היריב…',
+      arch_miss: 'החטאה', arch_need: 'צריך {n} נקודות', arch_arrow: 'חץ', arch_end: 'סבב', arch_sd: 'הארכה', arch_dist: 'מרחק', arch_m: 'מ׳', arch_wind: 'רוח', arch_calm: 'אין רוח', arch_rings: 'מסיטה {n} טבעות',
+      arch_r_all: 'כל הנקודות', arch_r_min: 'רק טבעת {n} ומעלה',
+      ru_arch: '<p>יורים חיצים אל מטרה עם עשר טבעות. הטבעת האמצעית שווה 10 נקודות והחיצונית נקודה אחת. גוררים אצבע כדי לכוון, מחזיקים אותה על המסך כדי להרגיע את היד, ומשחררים כשהסמן נמצא איפה שרוצים. הסמן רועד, והרעד נרגע כשמחזיקים קצת, אבל אם מחזיקים יותר מדי הוא חוזר.</p><p>הרוח מסיטה את החץ. החץ והמספר בלוח הרוח מראים לאיזה כיוון ובכמה טבעות החץ יוסט, ולכן צריך לכוון לצד ההפוך. הרוח משתנה בין חץ לחץ, ובמרחק גדול היא מסיטה יותר והיד רועדת יותר.</p><p>במשחק מול יריב יורים ארבעה סבבים של שלושה חיצים, כל שחקן בתורו, ומי שצבר יותר נקודות מנצח. בשוויון יש הארכה. בשלבים צריך להגיע ליעד נקודות עם מספר חיצים מוגבל, לפעמים כשרק טבעות פנימיות נספרות. ככל שמצטברות יותר נקודות מעבר ליעד, יותר כוכבים.</p>' },
+    en: { g_arch: 'Archery', d_arch: 'Aim against the wind, steady your hand, shoot',
+      arch_help: 'Drag to aim, hold to steady your hand, release. The wind pushes the arrow, so aim against it', arch_two_help: 'Each player shoots on their turn, at their own target', arch_wait: 'Waiting for the opponent’s shot…',
+      arch_miss: 'Miss', arch_need: 'Need {n} points', arch_arrow: 'Arrow', arch_end: 'End', arch_sd: 'Overtime', arch_dist: 'Distance', arch_m: 'm', arch_wind: 'Wind', arch_calm: 'No wind', arch_rings: 'pushes {n} rings',
+      arch_r_all: 'All points', arch_r_min: 'Only ring {n} and better',
+      ru_arch: '<p>You shoot arrows at a target with ten rings. The middle ring is worth 10 points and the outer one 1 point. Drag a finger to aim, hold it on the screen to steady your hand, and release when the marker is where you want it. The marker shakes, the shaking calms while you hold, but if you hold too long it builds up again.</p><p>The wind pushes the arrow. The arrow and the number on the wind panel show which way and by how many rings the arrow will be pushed, so you have to aim to the opposite side. The wind changes from arrow to arrow, and at a longer distance it pushes more and your hand shakes more.</p><p>Against an opponent you shoot four ends of three arrows each, taking turns, and the higher score wins. A tie goes to overtime. In levels you must reach a point goal with a limited number of arrows, sometimes when only the inner rings count. The more points above the goal, the more stars.</p>' },
+    ru: { g_arch: 'Стрельба из лука', d_arch: 'Цельтесь против ветра, успокойте руку, стреляйте',
+      arch_help: 'Перетащите для прицела, удерживайте, чтобы успокоить руку, и отпустите. Ветер сносит стрелу, цельтесь против него', arch_two_help: 'Каждый игрок стреляет в свой ход в свою мишень', arch_wait: 'Ждём выстрел соперника…',
+      arch_miss: 'Мимо', arch_need: 'Нужно {n} очков', arch_arrow: 'Стрела', arch_end: 'Серия', arch_sd: 'Овертайм', arch_dist: 'Дистанция', arch_m: 'м', arch_wind: 'Ветер', arch_calm: 'Нет ветра', arch_rings: 'сносит на {n} колец',
+      arch_r_all: 'Все очки', arch_r_min: 'Только кольцо {n} и выше',
+      ru_arch: '<p>Вы стреляете стрелами в мишень с десятью кольцами. Среднее кольцо стоит 10 очков, внешнее — 1 очко. Перетащите палец для прицела, удерживайте его на экране, чтобы успокоить руку, и отпустите, когда маркер там, где нужно. Маркер дрожит, дрожь затихает при удержании, но если держать слишком долго, она возвращается.</p><p>Ветер сносит стрелу. Стрелка и число на панели ветра показывают, в какую сторону и на сколько колец снесёт стрелу, поэтому нужно целиться в противоположную сторону. Ветер меняется от стрелы к стреле, а на большой дистанции он сносит сильнее и рука дрожит сильнее.</p><p>В матче с соперником играют четыре серии по три стрелы по очереди, побеждает набравший больше очков. При равенстве — овертайм. В уровнях нужно набрать цель по очкам ограниченным числом стрел, иногда когда считаются только внутренние кольца. Чем больше очков сверх цели, тем больше звёзд.</p>' },
+    es: { g_arch: 'Tiro con arco', d_arch: 'Apunta contra el viento, calma la mano y dispara',
+      arch_help: 'Arrastra para apuntar, mantén para calmar la mano y suelta. El viento desvía la flecha, así que apunta en contra', arch_two_help: 'Cada jugador dispara en su turno a su propia diana', arch_wait: 'Esperando el disparo del rival…',
+      arch_miss: 'Fallo', arch_need: 'Hacen falta {n} puntos', arch_arrow: 'Flecha', arch_end: 'Tanda', arch_sd: 'Prórroga', arch_dist: 'Distancia', arch_m: 'm', arch_wind: 'Viento', arch_calm: 'Sin viento', arch_rings: 'desvía {n} anillos',
+      arch_r_all: 'Todos los puntos', arch_r_min: 'Solo anillo {n} o mejor',
+      ru_arch: '<p>Disparas flechas a una diana de diez anillos. El anillo central vale 10 puntos y el exterior 1 punto. Arrastra un dedo para apuntar, mantenlo en la pantalla para calmar la mano y suelta cuando la mira esté donde quieres. La mira tiembla, el temblor se calma mientras mantienes, pero si mantienes demasiado vuelve.</p><p>El viento desvía la flecha. La flecha y el número del panel del viento muestran hacia dónde y cuántos anillos se desviará, así que hay que apuntar al lado contrario. El viento cambia de flecha en flecha, y a más distancia desvía más y la mano tiembla más.</p><p>Contra un rival se juegan cuatro tandas de tres flechas por turnos y gana quien tenga más puntos. Un empate va a prórroga. En los niveles hay que alcanzar una meta de puntos con un número limitado de flechas, a veces cuando solo cuentan los anillos interiores. Cuantos más puntos sobre la meta, más estrellas.</p>' },
+    ar: { g_arch: 'الرماية', d_arch: 'صوّب عكس الريح وهدّئ يدك وأطلق',
+      arch_help: 'اسحب للتصويب، اضغط مطولاً لتهدئة يدك ثم اترك. الريح تزيح السهم، لذا صوّب عكسها', arch_two_help: 'كل لاعب يرمي في دوره على هدفه', arch_wait: 'بانتظار رمية الخصم…',
+      arch_miss: 'خطأ', arch_need: 'مطلوب {n} نقطة', arch_arrow: 'سهم', arch_end: 'جولة', arch_sd: 'وقت إضافي', arch_dist: 'المسافة', arch_m: 'م', arch_wind: 'ريح', arch_calm: 'لا ريح', arch_rings: 'تزيح {n} حلقات',
+      arch_r_all: 'كل النقاط', arch_r_min: 'الحلقة {n} فما فوق فقط',
+      ru_arch: '<p>ترمي أسهماً على هدف من عشر حلقات. الحلقة الوسطى بعشر نقاط والخارجية بنقطة واحدة. اسحب إصبعك للتصويب، وأبقِه على الشاشة لتهدئة يدك، ثم اتركه عندما يكون المؤشر حيث تريد. المؤشر يهتز، والاهتزاز يهدأ أثناء الضغط، لكنه يعود إذا ضغطت طويلاً.</p><p>الريح تزيح السهم. السهم والرقم في لوحة الريح يبيّنان اتجاه الإزاحة وعدد الحلقات، لذا عليك التصويب إلى الجهة المعاكسة. الريح تتغير من سهم إلى آخر، وفي المسافة الأبعد تزيح أكثر وتهتز اليد أكثر.</p><p>أمام خصم تلعبان أربع جولات من ثلاثة أسهم بالتناوب ويفوز صاحب النقاط الأكثر. التعادل يذهب إلى وقت إضافي. في المراحل عليك بلوغ هدف نقاط بعدد محدود من الأسهم، وأحياناً تُحسب الحلقات الداخلية فقط. كلما زادت النقاط فوق الهدف زادت النجوم.</p>' }
+  };
+  for (const l in A) Object.assign(LANG[l], A[l]);
+})();
+
 /* ===== src/app.js ===== */
 'use strict';
 /* SportNest — מעטפת: שפות, אחסון, ניווט, מסכים, אונליין (NestLink). המשחקים נרשמים ב-Games. */
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const store = {
@@ -4618,10 +4731,257 @@ window.__sn = { get run() { return activeRun; }, get sc() { return curSc; }, get
   };
 })();
 
+/* ===== src/arch_ui.js ===== */
+'use strict';
+/* חץ וקשת — שלבים (מרחק, רוח וחוקים שונים), מול המחשב, שניים בטלפון (מסך מפוצל), אונליין. המנוע: Arch.
+   החץ נוחת ב: כוונה + סחף הרוח (גלוי לשני השחקנים) + נדנוד היד (נרגע כשמחזיקים, חוזר כשמחזיקים יותר מדי) + רעש קטן, הכול דטרמיניסטי לפי (זרע, צד, מספר חץ). */
+(function () {
+  const E = Arch, LV = E.makeLevels();
+  const VW = 10, BR = 4.05, TEAM = ['#4f8be8', '#e8584f'], OFF = 1.8;
+  let CROWD = null;
+  function sparkle() { if (CROWD) return CROWD; const R = E.prng(55); CROWD = []; for (let i = 0; i < 70; i++) CROWD.push({ x: R() * VW, y: R() * 16, r: 0.03 + R() * 0.05 }); return CROWD; }
+  const zoneName = h => h.pts ? String(h.pts) : '';
+
+  class Run {
+    constructor(cfg) {
+      this.cfg = cfg; this.mode = cfg.mode; this.net = cfg.mode === 'online'; this.dead = false; this.paused = false;
+      this.lv = cfg.mode === 'solo' ? cfg.lv : null; this.botLvl = cfg.mode === 'cpu' ? cfg.lv : 0;
+      this.seed = cfg.seed || (this.lv && this.lv.seed) || 1; this.me = this.net ? (Net.link.session.role === 'host' ? 0 : 1) : 0;
+      this.i = 0; this.sc = [0, 0]; this.rt = [[], []]; this.cur = 0; this.stuck = []; this.Rb = E.prng(this.seed * 5 + 1); this.queued = {};
+      this.rule = this.lv ? this.lv.rule : { k: 'all' }; this.w = this.lv ? this.lv.w : 1.25; this.d = this.lv ? this.lv.d : 50; this.wmax = this.lv ? this.lv.wmax : 2;
+      this.state = this.net ? 'count' : 'prep'; this.cd = 3.2; this.lastCd = 4; this.t = 0; this.resT = 0; this.fl = null; this.pop = null;
+      this.build(); this.last = performance.now(); this.raf = requestAnimationFrame(t => this.loop(t));
+      this._rs = () => this.layout(); window.addEventListener('resize', this._rs); if (this.net) Net.handler = this;
+      if (this.state === 'prep') this.beginArrow();
+    }
+    thrower() { return this.mode === 'solo' ? 0 : E.throwerOf(this.i); }
+    mine() { return this.mode === 'two' ? [0, 1] : this.net ? [this.me] : [0]; }
+    nameOf(i) { if (this.mode === 'two') return T(i ? 'p2' : 'p1'); if (this.net) return i === this.me ? T('you') : T('opp'); return i === 0 ? T('you') : T('bot'); }
+    ctx(i, side) { return { seed: this.seed, side, i, w: this.w, d: this.d, wmax: this.wmax, rule: this.rule }; }
+    /* ---------- build / layout ---------- */
+    build() {
+      const el = $('#play'), two = this.mode === 'two';
+      el.innerHTML = `<div class="hud"><button class="ib" data-pause>⏸</button><div class="stat" data-stat></div><button class="ib" data-snd>${S.sound ? '🔊' : '🔇'}</button></div>
+      <div class="pen-views ${two ? 'duo' : 'one'}">${two ? '<div class="pv top"><canvas></canvas></div>' : ''}<div class="pv bot"><canvas></canvas></div></div>
+      <div class="hint" data-msg style="min-height:34px;text-align:center"></div>${this.net ? Net.voiceBar() : ''}<div class="countdown" data-cd></div>`;
+      this.el = el; this.msg = $('[data-msg]', el);
+      this.views = $$('.pv', el).map(box => { const side = two ? (box.classList.contains('top') ? 1 : 0) : (this.net ? this.me : 0); return { box, cv: $('canvas', box), side, rot: two && side === 1, cs: 10, vh: 14, ctx: null, aim: null, charging: false, t0: 0 }; });
+      this.views.forEach(v => this.bindInput(v));
+      $('[data-pause]', el).onclick = () => this.onBack(); $('[data-snd]', el).onclick = e => { S.sound = !S.sound; saveS(); e.currentTarget.textContent = S.sound ? '🔊' : '🔇'; };
+      if (this.net) Net.wireVoice(el);
+      setTimeout(() => this.layout(), 0);
+    }
+    layout() {
+      this.views.forEach(v => {
+        const r = v.box.getBoundingClientRect(); v.cs = Math.max(8, Math.min((r.width - 2) / VW, (r.height - 2) / 14)); v.vh = Math.max(14, Math.min(17.5, (r.height - 2) / v.cs)); const d = Math.min(window.devicePixelRatio || 1, 2), w = VW * v.cs, h = v.vh * v.cs;
+        v.cv.width = Math.round(w * d); v.cv.height = Math.round(h * d); v.cv.style.width = w + 'px'; v.cv.style.height = h + 'px'; v.ctx = v.cv.getContext('2d'); v.ctx.setTransform(d, 0, 0, d, 0, 0);
+      });
+    }
+    cy(v) { return 6.35 + (v.vh - 14) * 0.3; }
+    toBoard(v, p) { return { x: (p.x - 5) / BR, y: -(p.y - this.cy(v)) / BR }; }
+    /* ---------- input ---------- */
+    local(v, e) { const r = v.cv.getBoundingClientRect(); let x = e.clientX - r.left, y = e.clientY - r.top; if (v.rot) { x = r.width - x; y = r.height - y; } return { x: x / v.cs, y: y / v.cs }; }
+    canAct(v) { return this.state === 'prep' && !this.paused && this.mine().includes(v.side) && this.thrower() === v.side && !this.botIn; }
+    bindInput(v) {
+      const upd = e => { const p = this.local(v, e); v.aim = E.clampAim(this.toBoard(v, { x: p.x, y: p.y - OFF })); };
+      v.cv.addEventListener('pointerdown', e => { e.preventDefault(); if (!this.canAct(v)) return; try { v.cv.setPointerCapture(e.pointerId); } catch (x) {} upd(e); v.charging = true; v.t0 = performance.now(); SFX.tap(); });
+      v.cv.addEventListener('pointermove', e => { if (!v.charging || !this.canAct(v)) return; upd(e); });
+      const up = e => { if (!v.charging) return; v.charging = false; if (!this.canAct(v)) return; upd(e); this.shootArrow(v.side, { x: v.aim.x, y: v.aim.y }, (performance.now() - v.t0) / 1000); };
+      v.cv.addEventListener('pointerup', up); v.cv.addEventListener('pointercancel', () => { v.charging = false; }); v.cv.oncontextmenu = e => e.preventDefault();
+    }
+    /* ---------- arrow flow ---------- */
+    beginArrow() {
+      this.state = 'prep'; this.fl = null; this.pop = null; const s = this.thrower();
+      this.views.forEach(v => { v.charging = false; });
+      if (this.mode === 'cpu' && s === 1) { const bd = E.botArrow(this.botLvl, this.ctx(this.i, 1), this.Rb); this.bot = bd; this.botT = 0; this.botIn = 0.7 + Math.min(1.6, bd.hold); } else { this.botIn = null; this.bot = null; }
+      this.autoIn = this.net && s === this.me ? 15 : null;
+      const mine = this.mine().includes(s); this.msg.textContent = this.mode === 'two' ? T('arch_two_help') : (mine ? T('arch_help') : T('arch_wait'));
+      const q = this.queued[this.i]; if (q) { delete this.queued[this.i]; this.onMessage(q); }
+    }
+    shootArrow(side, aim, hold) {
+      if (this.state !== 'prep' || this.thrower() !== side || !this.mine().includes(side)) return;   // only the thrower may throw
+      aim = E.clampAim(aim); hold = Math.max(0, Math.min(4, hold)); this.go(side, aim, hold);
+      if (this.net && side === this.me) Net.link.send({ type: 'arch', i: this.i, ax: aim.x, ay: aim.y, hold });
+    }
+    go(side, aim, hold) {
+      const out = E.land(aim, hold, this.ctx(this.i, side)); this.fl = { t: 0, T: out.T, out, side, aim }; this.state = 'fly'; this.botIn = null; this.autoIn = null; this.msg.textContent = ''; SFX.hit(); vib(12);
+    }
+    land() {
+      const f = this.fl, o = f.out, s = f.side; this.sc[s] += o.pts; this.stuck.push({ x: o.x, y: o.y, side: s, pts: o.pts, zone: o.hit.zone }); const ri = this.mode === 'solo' ? Math.floor(this.i / E.PER) : E.roundOf(this.i); this.rt[s][ri] = (this.rt[s][ri] || 0) + o.pts;
+      this.state = 'stick'; this.resT = 0.95; this.pop = { t: 0, o, s };
+      if (o.pts >= 50 || o.hit.zone === 'tri' && o.pts) { SFX.win(); vib(30); } else if (o.pts) SFX.lock(); else SFX.lose();
+    }
+    advance() {
+      const done = this.i + 1; let end = null;
+      if (this.mode === 'solo') { const st = E.levelState(this.lv, this.sc[0], done); if (st.done) end = st; }
+      else if (done % (E.PER * 2) === 0) { const d = E.decided(this.sc, done / (E.PER * 2)); if (d !== null) end = { res: d }; }
+      if (end) { this.state = 'end'; setTimeout(() => this.finish(end), 400); return; }
+      this.i++; if (this.i % E.PER === 0) { this.state = 'turn'; this.resT = 1.0; this.msg.textContent = ''; return; }
+      this.beginArrow();
+    }
+    onMessage(m) {
+      if (m.type === 'arch') {
+        const s = E.throwerOf(m.i);
+        if (m.i === this.i && this.state === 'prep' && s !== this.me && this.thrower() === s) this.go(s, E.clampAim({ x: m.ax, y: m.ay }), Math.max(0, Math.min(4, +m.hold || 0)));
+        else if (m.i >= this.i && this.state !== 'end' && this.state !== 'fin') this.queued[m.i] = m;
+      } else if (m.type === 'bye') { if (this.state !== 'fin' && this.state !== 'end') { toast(T('on_left')); this.state = 'end'; this.finish({ res: this.me }); } }
+      else if (m.type === 'again') { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } }
+    }
+    onNetStatus(st) { if (st === 'reconnecting') toast(T('on_reconn'), 3000); }
+    onRoster() {}
+    /* ---------- finish ---------- */
+    finish(end) {
+      if (this.state === 'fin') return; this.state = 'fin'; const m = this.mode, st = pg('arch'); let html = '', btns = '';
+      if (m === 'solo') {
+        const win = !!end.win, n = this.lv.n;
+        if (win) { if (end.stars > (st.lv[n] || 0)) st.lv[n] = end.stars; st.games++; st.wins++; saveP(); Meta.after('arch', 'solo', true, n); SFX.win();
+          html = `<h3>${T('done')}</h3><div class="big-st">${'★'.repeat(end.stars)}${'☆'.repeat(3 - end.stars)}</div><p>🏹 ${this.sc[0]}</p>`; if (n < LV.length) btns += `<button class="btn pri" data-e="next">${T('next_level')}</button>`; btns += `<button class="btn" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+        else { st.games++; saveP(); Meta.after('arch', 'solo', false, n); SFX.lose(); html = `<h3>${T('failed')}</h3><p>🏹 ${this.sc[0]}/${this.lv.goal}</p>`; btns = `<button class="btn pri" data-e="again">${T('retry')}</button><button class="btn" data-e="quit">${T('m_solo')}</button>`; }
+      } else {
+        const r = end.res; let title, win = false;
+        if (r === 'draw') title = T('draw'); else if (m === 'two') title = T('p_wins', { n: T(r ? 'p2' : 'p1') }); else { win = r === this.me; title = win ? T('win') : T('lose'); }
+        if (m === 'two') { Meta.after('arch', 'two', true); SFX.win(); } else { st.games++; if (win) st.wins++; saveP(); Meta.after('arch', m, win); win ? SFX.win() : SFX.lose(); }
+        html = `<h3>${title}</h3><p>🏹 ${this.sc[0]} : ${this.sc[1]}</p>`; btns = `<button class="btn pri" data-e="again">${T(this.net ? 'rematch' : 'retry')}</button><button class="btn" data-e="quit">${T('home')}</button>`;
+      }
+      setTimeout(() => { const o = openOv(html + btns); o.dataset.nobk = 1; $$('[data-e]', o).forEach(b => b.onclick = () => { closeOv(o); this.endAct(b.dataset.e); }); }, 350);
+    }
+    endAct(a) {
+      const cfg = this.cfg;
+      if (a === 'quit') { if (this.net) Net.leave(); activeRun = null; this.destroy(); let prev = stack.pop() || 'home'; if (prev === 'lobby') prev = 'gmenu'; while (stack.length && stack[stack.length - 1] === prev) stack.pop(); show(prev, false); render(prev); return; }
+      if (a === 'next') { this.destroy(); G.startSolo(cfg.lv.n + 1); return; }
+      if (a === 'again') {
+        if (this.net) { if (Net.link.session.role === 'host') { const msg = G.onlineStartMsg(); Net.link.send(msg); Net.onMessage(msg, 0); } else { Net.link.send({ type: 'again' }); toast(T('on_wait_host')); } return; }
+        this.destroy(); if (cfg.mode === 'solo') G.startSolo(cfg.lv.n); else if (cfg.mode === 'cpu') G.startCpu(cfg.lv); else G.startTwo();
+      }
+    }
+    onBack() {
+      if (this.state === 'fin') { this.endAct('quit'); return; } if (this.state === 'end' || this.paused) return; this.paused = true; const online = this.net;
+      const o = openOv(`<h3>${T('pause')}</h3><button class="btn pri" data-r>${T('resume')}</button>${online ? '' : `<button class="btn" data-x>${T('restart')}</button>`}<button class="btn" data-q>${T('quit')}</button>`);
+      o.onclose = () => { this.paused = false; };
+      $('[data-r]', o).onclick = () => closeOv(o);
+      const x = $('[data-x]', o); if (x) x.onclick = () => { o.onclose = null; closeOv(o); this.paused = false; this.endAct('again'); };
+      $('[data-q]', o).onclick = () => { o.onclose = null; closeOv(o); if (this.net) Net.link.send({ type: 'bye' }); this.state = 'fin'; this.endAct('quit'); };
+    }
+    /* ---------- loop ---------- */
+    loop(now) {
+      if (this.dead) return; const dt = Math.min(50, now - this.last) / 1000; this.last = now;
+      if (!this.paused) {
+        if (this.state === 'count') { const cd = $('[data-cd]', this.el); this.cd -= dt; const n = Math.ceil(this.cd); if (this.cd > 0) { if (n !== this.lastCd) { this.lastCd = n; if (n <= 3) { cd.textContent = n; SFX.count(); } } } else { cd.textContent = ''; this.beginArrow(); SFX.go(); } }
+        else if (this.state === 'prep') {
+          if (this.botIn != null && this.bot) { this.botT += dt; if (this.botT >= this.botIn) { const b = this.bot; this.bot = null; this.botIn = null; this.go(1, b.aim, b.hold); } }
+          if (this.autoIn != null) { this.autoIn -= dt; if (this.autoIn <= 0) { this.autoIn = null; const v = this.views[0]; this.shootArrow(this.me, v.aim || { x: 0, y: 0 }, 0.2); } }
+        }
+        else if (this.state === 'fly') { this.fl.t += dt; if (this.fl.t >= this.fl.T) this.land(); }
+        else if (this.state === 'stick') { this.pop.t += dt; this.resT -= dt; if (this.resT <= 0) this.advance(); }
+        else if (this.state === 'turn') { this.resT -= dt; if (this.resT <= 0) { this.stuck = []; this.beginArrow(); } }
+      }
+      this.t += dt; this.draw(); this.raf = requestAnimationFrame(t => this.loop(t));
+    }
+    /* ---------- drawing ---------- */
+    draw() { this.views.forEach(v => { if (v.ctx) this.drawView(v); }); this.stat(); }
+    ruleText() { const r = this.rule; return r.k === 'min' ? T('arch_r_min', { n: r.n }) : T('arch_r_all'); }
+    stat() {
+      const st = $('[data-stat]', this.el); if (!st) return;
+      if (this.mode === 'solo') st.innerHTML = `<span>🏹 ${this.sc[0]}/${this.lv.goal}<small>${T('arch_need', { n: this.lv.goal })}</small></span><span>${Math.min(this.i + (this.state === 'prep' || this.state === 'fly' ? 1 : 0), this.lv.arrows)}/${this.lv.arrows}<small>${T('arch_arrow')}</small></span><span>${this.d}${T('arch_m')}<small>${T('arch_dist')}</small></span>`;
+      else st.innerHTML = `<span style="color:${TEAM[0]}">🏹 ${this.sc[0]}<small>${esc(this.nameOf(0))}</small></span><span>${Math.min(E.roundOf(this.i) + 1, 99) > E.ENDS ? T('arch_sd') : (E.roundOf(this.i) + 1) + '/' + E.ENDS}<small>${T('arch_end')}</small></span><span style="color:${TEAM[1]}">🏹 ${this.sc[1]}<small>${esc(this.nameOf(1))}</small></span>`;
+    }
+    drawBoard(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, cx = X(5), cy = Y(this.cy(v)), R = BR * cs, cols = ['#f4efe3', '#f4efe3', '#22252b', '#22252b', '#3b82d6', '#3b82d6', '#d9433b', '#d9433b', '#f2c230', '#f2c230']; c.save();
+      c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.arc(cx + cs * 0.15, cy + cs * 0.25, R * 1.06, 0, 7); c.fill();
+      const art = Art.get('arch-target');
+      if (art) c.drawImage(art, cx - R * 1.08, cy - R * 1.08, R * 2.16, R * 2.16);
+      else {
+        c.fillStyle = '#7a5230'; c.beginPath(); c.arc(cx, cy, R * 1.08, 0, 7); c.fill();
+        for (let k = 0; k < 10; k++) { c.fillStyle = cols[k]; c.beginPath(); c.arc(cx, cy, R * (1 - k * E.RING), 0, 7); c.fill(); }
+        c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = Math.max(1, cs * 0.025); for (let k = 0; k <= 10; k++) { c.beginPath(); c.arc(cx, cy, R * (1 - k * E.RING) + 0, 0, 7); c.stroke(); }
+      }
+      const rl = this.rule; if (rl.k === 'min') { c.save(); c.strokeStyle = '#7dffb0'; c.lineWidth = cs * 0.1; c.setLineDash([cs * 0.25, cs * 0.15]); c.beginPath(); c.arc(cx, cy, R * (1 - (10 - rl.n + 1) * E.RING), 0, 7); c.stroke(); c.restore(); }
+      c.restore();
+    }
+    drawArrow(c, cs, x, y, col, sc) {   // tip at (x,y) in px; the shaft leans to the upper right
+      const art = Art.get('arch-arrow'); c.save(); c.translate(x, y); c.scale(sc, sc);
+      if (art) { c.drawImage(art, -cs * 0.1, -cs * 1.9, cs * 1.4, cs * 2.0); c.restore(); return; }
+      c.lineCap = 'round'; c.strokeStyle = '#d8b27a'; c.lineWidth = cs * 0.1; c.beginPath(); c.moveTo(0, 0); c.lineTo(cs * 0.8, -cs * 1.7); c.stroke();
+      c.fillStyle = '#c9ced6'; c.beginPath(); c.moveTo(0, 0); c.lineTo(cs * 0.09, -cs * 0.34); c.lineTo(cs * 0.27, -cs * 0.26); c.closePath(); c.fill();
+      c.fillStyle = col; c.beginPath(); c.moveTo(cs * 0.62, -cs * 1.32); c.lineTo(cs * 0.34, -cs * 1.4); c.lineTo(cs * 0.74, -cs * 1.86); c.lineTo(cs * 0.86, -cs * 1.62); c.closePath(); c.fill();
+      c.beginPath(); c.moveTo(cs * 0.62, -cs * 1.32); c.lineTo(cs * 1.1, -cs * 1.4); c.lineTo(cs * 0.86, -cs * 1.86); c.lineTo(cs * 0.74, -cs * 1.62); c.closePath(); c.fill(); c.restore();
+    }
+    windInfo() { const ctx = this.ctx(this.i, this.thrower()), w = E.wind(ctx), dr = E.drift(ctx); return { w, dr, rings: Math.hypot(dr.x, dr.y) / E.RING }; }
+    drawWind(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, vh = v.vh, wi = this.windInfo(), y0 = vh - 3.45; c.save();
+      c.fillStyle = 'rgba(8,14,24,.7)'; c.beginPath(); c.roundRect(X(1.0), Y(y0), X(8.0), Y(1.15), cs * 0.25); c.fill(); c.textBaseline = 'middle'; c.textAlign = 'left'; c.fillStyle = '#9fd0ff'; c.font = `800 ${cs * 0.5}px system-ui`;
+      c.fillText('💨 ' + T('arch_wind'), X(1.3), Y(y0 + 0.58));
+      if (!wi.rings) { c.textAlign = 'right'; c.fillStyle = '#c9d2e0'; c.fillText(T('arch_calm'), X(8.7), Y(y0 + 0.58)); }
+      else {
+        const L = Math.min(1.5, 0.35 + wi.rings * 0.2), ang = Math.atan2(-wi.dr.y, wi.dr.x), cx = X(4.2), cy = Y(y0 + 0.58), dx = Math.cos(ang) * L * cs, dy = Math.sin(ang) * L * cs;
+        c.strokeStyle = '#9fd0ff'; c.fillStyle = '#9fd0ff'; c.lineWidth = cs * 0.12; c.lineCap = 'round'; c.beginPath(); c.moveTo(cx - dx / 2, cy - dy / 2); c.lineTo(cx + dx / 2, cy + dy / 2); c.stroke();
+        c.beginPath(); c.moveTo(cx + dx / 2, cy + dy / 2); c.lineTo(cx + dx / 2 - Math.cos(ang - 0.5) * cs * 0.45, cy + dy / 2 - Math.sin(ang - 0.5) * cs * 0.45); c.lineTo(cx + dx / 2 - Math.cos(ang + 0.5) * cs * 0.45, cy + dy / 2 - Math.sin(ang + 0.5) * cs * 0.45); c.closePath(); c.fill();
+        c.textAlign = 'right'; c.fillStyle = '#fff'; c.font = `900 ${cs * 0.5}px system-ui`; c.fillText(T('arch_rings', { n: wi.rings.toFixed(1) }), X(8.7), Y(y0 + 0.58));
+      }
+      c.restore();
+    }
+    drawView(v) {
+      const c = v.ctx, cs = v.cs, vh = v.vh, X = x => x * cs, Y = y => y * cs, bgA = Art.get('bg-arch'), now = performance.now(), me = this.mine().includes(v.side), thr = this.thrower();
+      c.clearRect(0, 0, VW * cs, vh * cs); c.direction = 'ltr'; c.save(); c.beginPath(); c.roundRect(0, 0, VW * cs, vh * cs, 14); c.clip();
+      if (bgA) c.drawImage(bgA, 0, 0, VW * cs, vh * cs);
+      else { const g = c.createLinearGradient(0, 0, 0, Y(vh)); g.addColorStop(0, '#86bfe6'); g.addColorStop(0.55, '#c7e3d0'); g.addColorStop(0.56, '#5e9e55'); g.addColorStop(1, '#3f7a45'); c.fillStyle = g; c.fillRect(0, 0, X(VW), Y(vh)); c.fillStyle = 'rgba(255,255,255,.7)'; [[1.6, 2.6, 1.1], [7.6, 1.9, 0.8], [8.4, 3.2, 0.9]].forEach(k => { c.beginPath(); c.ellipse(X(k[0]), Y(k[1] * vh / 14), cs * k[2] * 1.5, cs * k[2] * 0.6, 0, 0, 7); c.fill(); }); c.fillStyle = 'rgba(0,0,0,.14)'; c.fillRect(0, Y(vh - 2.4), X(VW), Y(2.4)); }
+      this.drawBoard(c, cs, v); this.drawBoardHeader(c, cs, v); this.drawWind(c, cs, v);
+      // darts stuck in the board
+      this.stuck.forEach(d => this.drawArrow(c, cs, X(5 + d.x * BR), Y(this.cy(v) - d.y * BR), TEAM[d.side], 1));
+      // flying dart
+      if (this.fl && this.state === 'fly') { const f = this.fl, p = Math.min(1, f.t / f.T), o = f.out, tx = X(5 + o.x * BR), ty = Y(this.cy(v) - o.y * BR), sx = X(5 + o.x * BR * 0.3), sy = Y(vh - 1.8), e = 1 - Math.pow(1 - p, 2.2); this.drawArrow(c, cs, sx + (tx - sx) * e, sy + (ty - sy) * e - Math.sin(Math.PI * p) * cs * 0.6, TEAM[f.side], 1.5 - 0.5 * e); }
+      // aiming reticle (the thrower's own screen, or the bot's wobble)
+      if (this.state === 'prep') this.drawReticle(c, cs, v, now);
+      // score pop
+      if (this.pop) { const p = this.pop, k = Math.min(1, p.t * 4), o = p.o, x = X(5 + o.x * BR), y = Y(this.cy(v) - o.y * BR) - cs * (0.9 + 0.5 * k); c.save(); c.globalAlpha = Math.min(1, k * 2) * (p.t > 0.8 ? Math.max(0, 1 - (p.t - 0.8) * 5) : 1); c.font = `900 ${cs * 1.1}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = cs * 0.2; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.7)'; c.fillStyle = o.pts ? '#6dffa0' : '#ffd877'; const tx = o.hit.zone === 'miss' ? T('arch_miss') : (o.pts ? '+' + o.pts : '0') + (o.pts && zoneName(o.hit) && String(o.pts) !== zoneName(o.hit) ? ' ' + zoneName(o.hit) : ''); c.strokeText(tx, X(5), Y(this.cy(v)) - cs * 0.2); c.fillText(tx, X(5), Y(this.cy(v)) - cs * 0.2); c.restore(); }
+      // tray of darts left in this turn
+      this.drawTray(c, cs, v);
+      c.restore();
+    }
+    drawBoardHeader(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, two = this.mode === 'two'; c.fillStyle = 'rgba(8,14,24,.78)'; c.beginPath(); c.roundRect(X(1.0), Y(0.12), X(8.0), Y(1.2), cs * 0.25); c.fill(); c.textBaseline = 'middle';
+      if (this.mode === 'solo') { c.textAlign = 'center'; c.fillStyle = '#ffd877'; c.font = `800 ${cs * 0.55}px system-ui`; c.fillText('🏹 ' + this.sc[0] + ' / ' + this.lv.goal, X(5), Y(0.55)); c.fillStyle = '#fff'; c.font = `700 ${cs * 0.38}px system-ui`; c.fillText(this.ruleText(), X(5), Y(1.0)); }
+      else { const order = two ? [v.side, 1 - v.side] : [0, 1]; order.forEach((s, row) => { const y = Y(0.42 + row * 0.52), act = this.thrower() === s && this.state !== 'end'; c.textAlign = 'left'; c.fillStyle = TEAM[s]; c.font = `800 ${cs * 0.38}px system-ui`; c.fillText((act ? '▶ ' : '') + this.nameOf(s).slice(0, 7), X(1.25), y); c.textAlign = 'center'; c.fillStyle = '#c9d2e0'; const rr = this.rt[s]; c.fillText(rr.length ? '+' + rr[rr.length - 1] : '', X(5.6), y); c.textAlign = 'right'; c.fillStyle = '#fff'; c.font = `900 ${cs * 0.42}px system-ui`; c.fillText(this.sc[s], X(8.8), y); }); }
+    }
+    drawReticle(c, cs, v, now) {
+      const X = x => x * cs, Y = y => y * cs, s = this.thrower(); let aim = null, t = 0, ctx = this.ctx(this.i, s);
+      if (this.bot) { aim = this.bot.aim; t = Math.min(this.botT, this.bot.hold); }
+      else if (v.side === s && this.mine().includes(s)) { if (!v.aim) { c.fillStyle = 'rgba(255,255,255,.85)'; c.font = `700 ${cs * 0.55}px system-ui`; c.textAlign = 'center'; c.fillText('☝', X(5), Y(vh_(v) - 2.6)); return; } aim = v.aim; t = v.charging ? (now - v.t0) / 1000 : 0; }
+      else return;
+      const sw = E.sway(t, ctx), rx = X(5 + (aim.x + sw.dx) * BR), ry = Y(this.cy(v) - (aim.y + sw.dy) * BR), ax = X(5 + aim.x * BR), ay = Y(this.cy(v) - aim.y * BR);
+      c.save(); c.strokeStyle = 'rgba(255,255,255,.4)'; c.lineWidth = cs * 0.05; c.setLineDash([cs * 0.12, cs * 0.12]); c.beginPath(); c.arc(ax, ay, Math.max(cs * 0.15, E.amp(t, this.w) * BR * cs), 0, 7); c.stroke(); c.setLineDash([]);
+      c.strokeStyle = '#ffd877'; c.fillStyle = 'rgba(255,216,119,.2)'; c.lineWidth = cs * 0.07; c.beginPath(); c.arc(rx, ry, cs * 0.34, 0, 7); c.fill(); c.stroke(); c.beginPath(); c.moveTo(rx - cs * 0.55, ry); c.lineTo(rx + cs * 0.55, ry); c.moveTo(rx, ry - cs * 0.55); c.lineTo(rx, ry + cs * 0.55); c.stroke();
+      if (!this.bot && v.charging) { const gx = X(9.4), gy1 = Y(this.cy(v) + BR + 0.4), gh = Y(2 * BR * 0.7), a = E.amp(t, this.w) / (E.amp(0, this.w)), g = Math.max(0, Math.min(1, 1 - a)); c.fillStyle = 'rgba(0,0,0,.5)'; c.beginPath(); c.roundRect(gx - cs * 0.22, gy1 - gh, cs * 0.44, gh, cs * 0.22); c.fill(); c.fillStyle = g > 0.7 ? '#59d28a' : g > 0.4 ? '#f0c24b' : '#ff6b6b'; c.beginPath(); c.roundRect(gx - cs * 0.15, gy1 - cs * 0.07 - (gh - cs * 0.14) * g, cs * 0.3, (gh - cs * 0.14) * g, cs * 0.15); c.fill(); }
+      c.restore();
+    }
+    drawTray(c, cs, v) {
+      const X = x => x * cs, Y = y => y * cs, vh = v.vh, used = this.i % E.PER, s = this.thrower();
+      for (let k = 0; k < E.PER; k++) { const x = X(5 + (k - 1) * 1.5), y = Y(vh - 1.1), on = this.state === 'prep' ? k >= used : k > used; c.save(); c.globalAlpha = on ? 1 : 0.28; this.drawArrow(c, cs, x - cs * 0.25, y + cs * 0.55, TEAM[s], 0.9); c.restore(); }
+    }
+    destroy() { this.dead = true; cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._rs); if (this.net && Net.handler === this) Net.handler = null; }
+  }
+  const vh_ = v => v.vh;
+  function closeAllOv() { while (overlays.length) { const o = overlays[overlays.length - 1]; if (o === guideEl) break; closeOv(o); } }
+  function launch(cfg) {
+    if (activeRun) { try { activeRun.destroy(); } catch (e) {} activeRun = null; }
+    curGame = 'arch'; setPlayBg('arch'); const was = curSc; show('play', was !== 'play'); const r = new Run(cfg); activeRun = r; return r;
+  }
+  const G = Games.arch = {
+    ready: true, modes: ['solo', 'cpu', 'two', 'online'], levels: LV,
+    art() { return '<svg viewBox="0 0 90 70" width="90" height="70"><rect width="90" height="70" rx="10" fill="#2d4a3a"/><circle cx="45" cy="35" r="26" fill="#f4efe3"/><circle cx="45" cy="35" r="21" fill="#22252b"/><circle cx="45" cy="35" r="16" fill="#3b82d6"/><circle cx="45" cy="35" r="11" fill="#d9433b"/><circle cx="45" cy="35" r="6" fill="#f2c230"/><path d="M47 33 68 6" stroke="#d8b27a" stroke-width="2.5" stroke-linecap="round"/><path d="M68 6 74 4 71 11z M68 6 62 3 65 10z" fill="#e8584f"/></svg>'; },
+    startSolo(n) { launch({ mode: 'solo', lv: LV[n - 1] }); },
+    startCpu(lv) { launch({ mode: 'cpu', lv, seed: 1 + ((Math.random() * 9000) | 0) }); },
+    startTwo() { launch({ mode: 'two', seed: 1 + ((Math.random() * 9000) | 0) }); },
+    onlineStartMsg() { return { type: 'start', game: 'arch', seed: 1 + ((Math.random() * 9000) | 0) }; },
+    startOnline(m) { closeAllOv(); launch({ mode: 'online', seed: m.seed }); },
+    isRunning: () => !!activeRun
+  };
+})();
+
 /* ===== src/shell2.js ===== */
 'use strict';
 /* SportNest — מעטפת AppNest מלאה: בית, אתגר יומי, מדבקות, חוקים, הישגים, הגדרות, גיבוי, אודות, מדריך. */
-const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf', 'bowl'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳', bowl: '🎳' };
+const GAME_IDS = ['pen', 'hoop', 'dart', 'box', 'snk', 'golf', 'bowl', 'arch'], GICON = { pen: '⚽', hoop: '🏀', dart: '🎯', box: '🥊', snk: '🎱', golf: '⛳', bowl: '🎳', arch: '🏹' };
 const STICKERS = [...GAME_IDS.map(g => ['first_' + g, GICON[g]]), ['stars10', '⭐'], ['stars50', '🌟'], ['stars150', '🏆'], ['three', '✨'], ['cpu', '🤖'], ['two', '👥'], ['online', '🌐'], ['daily1', '📅'], ['streak3', '🔥'], ['streak7', '☄️']];
 (function () { // מדבקת "שלב ראשון" לכל משחק — טקסטים נבנים משם המשחק בכל שפה (אלא אם כבר קיימים)
   const P = { he: ['שלב ראשון: ', 'סיימו שלב ראשון ב־'], en: ['First level: ', 'Finish a first level in '], ru: ['Первый уровень: ', 'Пройдите первый уровень в '], es: ['Primer nivel: ', 'Supera un primer nivel en '], ar: ['أول مرحلة: ', 'أنهِ أول مرحلة في '] };
